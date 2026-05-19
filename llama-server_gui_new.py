@@ -2381,6 +2381,10 @@ class LlamaServerGUI:
                     self.config_combo.set(rel[:-5])
             except (ValueError, OSError):
                 pass
+            
+            # Refresh model repo tree (custom roots may have changed)
+            if hasattr(self, 'scan_downloaded_models'):
+                self.scan_downloaded_models()
         except Exception as e:
             Messagebox.show_error(f"加载配置失败： {e}", "错误")
     
