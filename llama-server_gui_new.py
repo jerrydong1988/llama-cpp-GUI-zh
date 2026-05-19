@@ -158,7 +158,6 @@ class LlamaServerGUI:
         self.create_combobox(chat_group, "推理开关 (--reasoning):", self.reasoning, "启用/禁用/自动推理（思考）功能。MTP 模型建议设为 off。", reasoning_options, row=3)
         self.jinja = tk.BooleanVar(value=False)
         self.create_checkbutton(chat_group, "启用 Jinja (--jinja)", self.jinja, "启用 Jinja2 模板（某些自定义模板需要）。", row=4)
-        self.create_checkbutton(chat_group, "启用 Jinja (--jinja)", self.jinja, "启用 Jinja2 模板（某些自定义模板需要）。", row=3)
 
     def setup_generation_tab(self, parent):
         """Configures the 'Generation' tab for sampling and output control."""
