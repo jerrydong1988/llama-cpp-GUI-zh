@@ -15,7 +15,7 @@ import webbrowser
 import urllib.request
 import urllib.error
 
-__version__ = "1.3.0"
+__version__ = "1.3.2"
 __repo__ = "jerrydong1988/llama-cpp-GUI-zh"
 
 try:
@@ -83,10 +83,8 @@ class LlamaServerGUI:
         # Also trigger on startup (if model already loaded)
         self.root.after(600, self._auto_adjust_ctx_slider)
         
-        # Background update check (non-blocking, delayed until UI ready)
+        # Background update check (started in setup_ui after UI is built)
         self._update_info = None
-        self.root.after(3000, lambda: threading.Thread(
-            target=self._check_for_update, daemon=True).start())
 
     def get_config_path(self, filename):
         """Get the path for config file that works with PyInstaller."""
@@ -218,6 +216,11 @@ class LlamaServerGUI:
         header.pack(fill=tk.X)
         ttk.Label(header, text="🔧 LLaMA 服务器管理器", font=("", 14, "bold")).pack(side=tk.LEFT)
         ttk.Label(header, text="v1.3.1", foreground="gray", font=("", 9)).pack(side=tk.LEFT, padx=(8, 0))
+        self.update_status_var = tk.StringVar(value="")
+        self.update_status_label = ttk.Label(header, textvariable=self.update_status_var,
+            font=("", 9), foreground="#3498db", cursor="hand2")
+        self.update_status_label.pack(side=tk.LEFT, padx=(10, 0))
+        self.update_status_label.bind("<Button-1>", lambda e: self._download_update())
         
         # Theme toggle
         self.theme_btn = ttk.Button(header, text="☀️ 亮色", command=self._toggle_theme,
@@ -307,6 +310,20 @@ class LlamaServerGUI:
         
         self.root.bind('<Control-s>', lambda e: self.save_named_config())
         self.root.bind('<Control-Shift-S>', lambda e: self.start_server() if not self.is_running else None)
+        
+        # Start update check (UI is fully built)
+        self._update_status = None
+        self._update_check_done = False
+        threading.Thread(target=self._check_for_update, daemon=True).start()
+        # Poll for result from main thread (avoids thread->after callback issues)
+        self.root.after(500, self._poll_update_check)
+    
+    def _poll_update_check(self):
+        """Check if background update thread has finished, show result."""
+        if self._update_status:
+            self.update_status_var.set(self._update_status)
+        elif not self._update_check_done:
+            self.root.after(500, self._poll_update_check)
     
     def _toggle_theme(self):
         """Toggle between darkly (dark) and flatly (light) themes."""
@@ -2620,6 +2637,18 @@ class LlamaServerGUI:
             req = urllib.request.Request(url)
             req.add_header("Accept", "application/vnd.github+json")
             req.add_header("User-Agent", "LLaMA-Server-GUI")
+            # Read local token to avoid rate limiting (public repo, but auth helps)
+            token_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_gh_token")
+            if getattr(sys, 'frozen', False):
+                token_path = os.path.join(os.path.dirname(sys.executable), "_gh_token")
+            if os.path.isfile(token_path):
+                try:
+                    with open(token_path, 'r') as f:
+                        token = f.read().strip()
+                    if token:
+                        req.add_header("Authorization", f"Bearer {token}")
+                except Exception:
+                    pass
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             latest_tag = data.get("tag_name", "").lstrip("v")
@@ -2641,13 +2670,21 @@ class LlamaServerGUI:
                         break
                 if asset_url:
                     self._update_info = {"version": latest_tag, "url": asset_url}
-                    self.root.after(0, lambda: self.update_status_var.set(
-                        f"🔄 v{latest_tag} 可用 · 点击更新"))
-        except Exception:
-            pass  # Silently fail — no network or GitHub is fine
-    
+                    self._update_status = f"🔄 v{latest_tag} 可用 · 点击更新"
+                    return
+        except Exception as e:
+            self._update_status = f"❌ 更新检测失败: {str(e)[:30]}"
+        finally:
+            self._update_check_done = True
     def _download_update(self):
         """Download new exe and prepare self-replace batch script."""
+        if not self._update_info:
+            return
+        # Run in background to avoid freezing UI
+        threading.Thread(target=self._do_download_update, daemon=True).start()
+    
+    def _do_download_update(self):
+        """Background download worker."""
         if not self._update_info:
             return
         
@@ -2691,37 +2728,35 @@ class LlamaServerGUI:
                     f.write(chunk)
             
             # Write self-replace batch
-            with open(bat_path, "w", encoding="ascii") as f:
+            with open(bat_path, "w", encoding="utf-8") as f:
+                exe_name = os.path.basename(current_exe)
                 f.write(f"""@echo off
 chcp 65001 >nul
-echo 正在更新 LLaMA-Server-GUI 到 v{version}...
+echo Updating to v{version}...
+:wait
 ping 127.0.0.1 -n 2 >nul
-move /Y "{new_exe}" "{current_exe}"
-if %errorlevel% equ 0 (
-    echo 更新成功！正在启动新版本...
-    start "" "{current_exe}"
-) else (
-    echo 更新失败，请手动替换文件。
-    pause
-)
+move /Y "{new_exe}" "{current_exe}" >nul 2>&1
+if errorlevel 1 goto wait
+echo Launching...
+cd /d "{exe_dir}"
+start "" "{exe_name}"
 del "%~f0"
 """)
             
-            self.root.after(0, lambda: self.update_status_var.set(
-                f"✅ v{version} 下载完成 · 即将重启"))
-            
-            # Ask user to restart
-            if Messagebox.yesno(
-                f"v{version} 下载完成。\n\n是否立即重启以完成更新？", "更新就绪"):
-                # Run batch and quit
-                import subprocess
-                subprocess.Popen(["cmd", "/c", bat_path], 
-                    creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
-                self.root.after(500, self.root.destroy)
-            
+            self.root.after(0, lambda v=version, bp=bat_path: self._prompt_restart(v, bp))
         except Exception as e:
-            self.root.after(0, lambda: self.update_status_var.set(
-                f"❌ 更新失败: {str(e)[:40]}"))
+            self.root.after(0, lambda msg=str(e)[:40]: self.update_status_var.set(
+                f"❌ 更新失败: {msg}"))
+    
+    def _prompt_restart(self, version, bat_path):
+        """Ask user to restart after download (runs on main thread)."""
+        self.update_status_var.set(f"✅ v{version} 下载完成 · 即将重启")
+        if Messagebox.yesno(
+            f"v{version} 下载完成。\n\n是否立即重启以完成更新？", "更新就绪"):
+            import subprocess
+            subprocess.Popen(["cmd", "/c", bat_path],
+                creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
+            self.root.after(500, self.root.destroy)
 
 
     def save_config(self, path=None):

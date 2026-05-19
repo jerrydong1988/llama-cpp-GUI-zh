@@ -19,6 +19,9 @@ dist/
 .vscode/
 .idea/
 
+# Secrets (local only)
+_gh_token
+
 # OS
 .DS_Store
 Thumbs.db
