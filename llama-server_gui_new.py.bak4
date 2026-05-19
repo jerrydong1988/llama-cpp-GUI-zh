@@ -153,11 +153,7 @@ class LlamaServerGUI:
         reasoning_levels = ["", "low", "medium", "high"]
         self.create_combobox(chat_group, "推理力度:", self.reasoning_effort, "为聊天模板设置推理力度（部分模型支持）。", reasoning_levels, row=2)
         
-        self.reasoning = tk.StringVar()
-        reasoning_options = ["", "on", "off", "auto"]
-        self.create_combobox(chat_group, "推理开关 (--reasoning):", self.reasoning, "启用/禁用/自动推理（思考）功能。MTP 模型建议设为 off。", reasoning_options, row=3)
         self.jinja = tk.BooleanVar(value=False)
-        self.create_checkbutton(chat_group, "启用 Jinja (--jinja)", self.jinja, "启用 Jinja2 模板（某些自定义模板需要）。", row=4)
         self.create_checkbutton(chat_group, "启用 Jinja (--jinja)", self.jinja, "启用 Jinja2 模板（某些自定义模板需要）。", row=3)
 
     def setup_generation_tab(self, parent):
@@ -206,11 +202,6 @@ class LlamaServerGUI:
         core_group.pack(fill=tk.X, pady=5, side=tk.TOP)
         self.ctx_size = tk.IntVar(value=4096)
         self.create_slider(core_group, "上下文大小 (-c):", self.ctx_size, "模型的上下文大小（序列长度）。", from_=0, to=131072, resolution=1024, row=0)
-        self.ctx_size_auto = tk.BooleanVar(value=False)
-        cb = ttk.Checkbutton(core_group, text="自动上下文 (--ctx-size 0)", variable=self.ctx_size_auto, bootstyle="round-toggle")
-        cb.grid(row=0, column=2, sticky=tk.W, padx=5, pady=5)
-        ToolTip(cb, "勾选后不传 -c 参数，llama-server 自动使用模型完整上下文长度。")
-
         self.gpu_layers = tk.IntVar(value=99)
         self.create_slider(core_group, "GPU 层数 (-ngl):", self.gpu_layers, "卸载到 GPU 的模型层数（99 = 全部）。", from_=0, to=99, resolution=1, row=1)
         self.threads = tk.StringVar(value="")
@@ -526,8 +517,7 @@ class LlamaServerGUI:
             return None
         
         cmd = ["llama-server", "-m", self.model_path.get().strip()]
-        if not self.ctx_size_auto.get():
-            cmd.extend(['-c', str(self.ctx_size.get())])
+        cmd.extend(['-c', str(self.ctx_size.get())])
         cmd.extend(['-ngl', str(self.gpu_layers.get())])
         
         args = {
@@ -539,7 +529,6 @@ class LlamaServerGUI:
             '--spec-draft-n-max': self.draft_tokens,
             '--spec-draft-n-min': self.spec_draft_n_min,
             '--spec-type': self.spec_type,
-            '--reasoning': self.reasoning,
             '--hf-repo-draft': self.draft_hf_repo, '--n-cpu-moe': self.moe_cpu_layers,
             '--reasoning-format': self.reasoning_format, '-ub': self.ubatch_size,
             '-n': self.n_predict, '--temp': self.temp, '--top-k': self.top_k,
@@ -712,8 +701,6 @@ class LlamaServerGUI:
             'repeat_last_n': self.repeat_last_n.get(),
             'presence_penalty': self.presence_penalty.get(), 'frequency_penalty': self.frequency_penalty.get(),
             'seed': self.seed.get(), 'min_p': self.min_p.get(),
-            'ctx_size_auto': self.ctx_size_auto.get(),
-            'reasoning': self.reasoning.get(),
             'hf_repo': self.hf_repo.get(), 'hf_file': self.hf_file.get(),
             'cache_type_k': self.cache_type_k.get(), 'cache_type_v': self.cache_type_v.get()
         }
@@ -834,8 +821,6 @@ class LlamaServerGUI:
             self.top_p.set(config.get('top_p', ''))
             self.repeat_penalty.set(config.get('repeat_penalty', ''))
             self.cache_prompt.set(config.get('cache_prompt', True))
-            self.ctx_size_auto.set(config.get('ctx_size_auto', False))
-            self.reasoning.set(config.get('reasoning', ''))
             self.reranking.set(config.get('reranking', False))
             self.pooling.set(config.get('pooling', ''))
             self.sleep_idle.set(config.get('sleep_idle', ''))
