@@ -431,10 +431,11 @@ class LlamaServerGUI:
         self.ms_file_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.ms_file_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
+        # Bind mousewheel to canvas and its content area only
         def _on_mw(event):
             self.ms_file_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        self.ms_file_canvas.bind_all("<MouseWheel>", _on_mw, add="+")
-        self._ms_mousewheel_binding = _on_mw
+        self.ms_file_canvas.bind("<MouseWheel>", _on_mw)
+        self.ms_file_checkframe.bind("<MouseWheel>", _on_mw)
         
         self.ms_file_vars = []
         
@@ -458,7 +459,7 @@ class LlamaServerGUI:
         self.draft_status_var = tk.StringVar(value="")
         ttk.Label(dc, textvariable=self.draft_status_var, foreground="gray").pack(side=tk.LEFT, padx=(10, 0))
         
-        self.draft_listbox = tk.Listbox(dg, height=2, font=("Consolas", 8))
+        self.draft_listbox = tk.Listbox(dg, height=4, font=("Consolas", 8))
         self.draft_listbox.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(3, 0))
         self.draft_listbox.bind("<<ListboxSelect>>", self._on_draft_select)
         self.draft_file_data = []
@@ -1297,6 +1298,15 @@ class LlamaServerGUI:
             cb = ttk.Checkbutton(row, variable=var, bootstyle="round-toggle")
             cb.pack(side=tk.LEFT)
             
+            # Determine file type label for tooltip
+            if f['type'] == 'mmproj':
+                type_label = "多模态投影器"
+            elif f['type'] == 'imatrix':
+                type_label = "重要性矩阵"
+            else:
+                type_label = "主模型"
+            ToolTip(cb, f"勾选以下载此{type_label} ({self._format_size(f['size'])})")
+            
             # Icon + file info
             if f['type'] == 'mmproj':
                 icon = "📷"
@@ -1649,7 +1659,7 @@ class LlamaServerGUI:
             partial = os.path.join(app_dir, 'models', self.draft_ms_repo.get().strip().replace('/', os.sep), filename + '.tmp')
             if os.path.exists(partial):
                 try: os.remove(partial)
-                except: pass
+                except OSError: pass
             return
         
         # Auto-fill draft model path in the Advanced tab
@@ -2086,8 +2096,14 @@ class LlamaServerGUI:
         self.server_status_var.set("⏳ 启动中...")
         self.server_status_label.config(foreground="orange")
         
+        # Capture connection info at launch time (thread-safe)
+        health_host = self.host.get().strip()
+        if health_host == '0.0.0.0': health_host = 'localhost'
+        health_port = self.port.get().strip()
+        
         # Start health check thread
-        threading.Thread(target=self._health_check_loop, daemon=True).start()
+        threading.Thread(target=self._health_check_loop, 
+            args=(health_host, health_port), daemon=True).start()
 
     def stop_server(self):
         if self.server_process and self.is_running:
@@ -2109,12 +2125,9 @@ class LlamaServerGUI:
         self.output_text.insert(tk.END, text)
         self.output_text.see(tk.END)
     
-    def _health_check_loop(self):
+    def _health_check_loop(self, host, port):
         """Periodically ping the server's health endpoint."""
         import time
-        host = self.host.get().strip()
-        if host == '0.0.0.0': host = 'localhost'
-        port = self.port.get().strip()
         url = f"http://{host}:{port}/health"
         
         # Wait for server to start (up to 30 seconds)
@@ -2359,6 +2372,15 @@ class LlamaServerGUI:
             self.config_file = load_path
 
             self.update_all_sliders()
+            
+            # Sync config dropdown to show the loaded config name
+            configs_dir = self._get_configs_dir()
+            try:
+                rel = os.path.relpath(load_path, configs_dir)
+                if rel.endswith('.json'):
+                    self.config_combo.set(rel[:-5])
+            except (ValueError, OSError):
+                pass
         except Exception as e:
             Messagebox.show_error(f"加载配置失败： {e}", "错误")
     
