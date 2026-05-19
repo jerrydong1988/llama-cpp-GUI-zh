@@ -15,6 +15,9 @@ import webbrowser
 import urllib.request
 import urllib.error
 
+__version__ = "1.3.0"
+__repo__ = "jerrydong1988/llama-cpp-GUI-zh"
+
 try:
     import pystray
     from pystray import MenuItem as item
@@ -79,6 +82,10 @@ class LlamaServerGUI:
         self.model_path.trace_add('write', on_model_path_change)
         # Also trigger on startup (if model already loaded)
         self.root.after(600, self._auto_adjust_ctx_slider)
+        
+        # Background update check (non-blocking)
+        self._update_info = None
+        threading.Thread(target=self._check_for_update, daemon=True).start()
 
     def get_config_path(self, filename):
         """Get the path for config file that works with PyInstaller."""
@@ -2589,6 +2596,118 @@ class LlamaServerGUI:
 
     def clear_output(self):
         self.output_text.delete(1.0, tk.END)
+
+    # ── 在线更新 ──
+    def _check_for_update(self):
+        """Query GitHub Releases API for newer version. Runs in background thread."""
+        try:
+            url = f"https://api.github.com/repos/{__repo__}/releases/latest"
+            req = urllib.request.Request(url)
+            req.add_header("Accept", "application/vnd.github+json")
+            req.add_header("User-Agent", "LLaMA-Server-GUI")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            latest_tag = data.get("tag_name", "").lstrip("v")
+            if not latest_tag:
+                return
+            
+            # Compare versions (simple numeric tuple comparison)
+            def parse(v):
+                try: return tuple(int(x) for x in v.split("."))
+                except: return (0,)
+            current = parse(__version__)
+            latest = parse(latest_tag)
+            
+            if latest > current:
+                asset_url = None
+                for a in data.get("assets", []):
+                    if a["name"].endswith(".exe"):
+                        asset_url = a["browser_download_url"]
+                        break
+                if asset_url:
+                    self._update_info = {"version": latest_tag, "url": asset_url}
+                    self.root.after(0, lambda: self.update_status_var.set(
+                        f"🔄 v{latest_tag} 可用 · 点击更新"))
+        except Exception:
+            pass  # Silently fail — no network or GitHub is fine
+    
+    def _download_update(self):
+        """Download new exe and prepare self-replace batch script."""
+        if not self._update_info:
+            return
+        
+        url = self._update_info["url"]
+        version = self._update_info["version"]
+        
+        # Determine paths
+        exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+        new_exe = os.path.join(exe_dir, f"LLaMA-Server-GUI_v{version}.exe")
+        bat_path = os.path.join(exe_dir, "_update.bat")
+        current_exe = sys.executable if getattr(sys, 'frozen', False) else os.path.join(exe_dir, "LLaMA-Server-GUI.exe")
+        
+        try:
+            # Download with progress
+            self.update_status_var.set(f"⬇ 下载中 v{version}...")
+            req = urllib.request.Request(url)
+            req.add_header("Accept", "application/octet-stream")
+            req.add_header("User-Agent", "LLaMA-Server-GUI")
+            
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                total = int(resp.headers.get("Content-Length", 0))
+                downloaded = 0
+                chunks = []
+                last_pct = -1
+                while True:
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    downloaded += len(chunk)
+                    if total > 0:
+                        pct = downloaded * 100 // total
+                        if pct != last_pct and pct % 10 == 0:
+                            self.root.after(0, lambda p=pct: self.update_status_var.set(
+                                f"⬇ 下载中 v{version}... {p}%"))
+                            last_pct = pct
+            
+            # Write to .new file
+            with open(new_exe, "wb") as f:
+                for chunk in chunks:
+                    f.write(chunk)
+            
+            # Write self-replace batch
+            with open(bat_path, "w", encoding="ascii") as f:
+                f.write(f"""@echo off
+chcp 65001 >nul
+echo 正在更新 LLaMA-Server-GUI 到 v{version}...
+ping 127.0.0.1 -n 2 >nul
+move /Y "{new_exe}" "{current_exe}"
+if %errorlevel% equ 0 (
+    echo 更新成功！正在启动新版本...
+    start "" "{current_exe}"
+) else (
+    echo 更新失败，请手动替换文件。
+    pause
+)
+del "%~f0"
+""")
+            
+            self.root.after(0, lambda: self.update_status_var.set(
+                f"✅ v{version} 下载完成 · 即将重启"))
+            
+            # Ask user to restart
+            if Messagebox.yesno(
+                f"v{version} 下载完成。\n\n是否立即重启以完成更新？", "更新就绪"):
+                # Run batch and quit
+                import subprocess
+                subprocess.Popen(["cmd", "/c", bat_path], 
+                    creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
+                self.root.after(500, self.root.destroy)
+            
+        except Exception as e:
+            self.root.after(0, lambda: self.update_status_var.set(
+                f"❌ 更新失败: {str(e)[:40]}"))
+
 
     def save_config(self, path=None):
         """Save the current configuration.
