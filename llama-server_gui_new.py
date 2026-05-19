@@ -195,6 +195,8 @@ class LlamaServerGUI:
         
         self.ignore_eos = tk.BooleanVar(value=False)
         self.create_checkbutton(output_group, "忽略结束标记 (--ignore-eos)", self.ignore_eos, "防止模型提前停止。", row=1)
+        self.json_schema = tk.StringVar(value="")
+        self.create_entry(output_group, "JSON 约束 (--json-schema):", self.json_schema, "JSON Schema 约束，限制输出为合法 JSON 格式。", row=2)
         
         # --- Sampling Parameters ---
         sampling_group = ttk.Labelframe(parent, text="采样参数", padding="10")
@@ -370,9 +372,10 @@ class LlamaServerGUI:
         self.create_spinbox(server_rel_group, "超时秒数 (--timeout):", self.timeout, "服务器读写超时秒数（默认 600）。", from_=1, to=3600, increment=10, row=0)
         self.sleep_idle = tk.StringVar(value="")
         self.create_spinbox(server_rel_group, "空闲休眠秒数 (--sleep-idle-seconds):", self.sleep_idle, "空闲 N 秒后自动卸载模型释放显存（默认 -1 = 禁用）。", from_=-1, to=86400, increment=60, row=1)
+        self.context_shift = tk.BooleanVar(value=False)
+        self.create_checkbutton(server_rel_group, "上下文偏移 (--context-shift)", self.context_shift, "无限生成时的上下文偏移策略，避免超出上下文窗口。", row=2)
 
         
-
     def setup_server_api_tab(self, parent):
         """Configures the 'Server & API' tab for network, access, and logging."""
         parent.rowconfigure(2, weight=1) # Allow custom args group to expand
