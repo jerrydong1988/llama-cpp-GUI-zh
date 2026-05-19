@@ -2256,12 +2256,13 @@ class LlamaServerGUI:
         self.output_text.see(tk.END)
     
     def _health_check_loop(self, host, port):
-        """Periodically ping the server's health endpoint."""
+        """Periodically ping the server's health endpoint.
+        Waits indefinitely for the model to load — no false timeout for large models."""
         import time
         url = f"http://{host}:{port}/health"
         
-        # Wait for server to start (up to 30 seconds)
-        for attempt in range(30):
+        # Phase 1: Quick retry (every 1s, first 30 attempts)
+        for attempt in range(1, 31):
             if not self.is_running:
                 return
             try:
@@ -2269,28 +2270,56 @@ class LlamaServerGUI:
                 start = time.time()
                 with urllib.request.urlopen(req, timeout=2) as resp:
                     elapsed = int((time.time() - start) * 1000)
-                    healthy = resp.status == 200
-                
-                if healthy:
-                    self.root.after(0, lambda ms=elapsed: self._set_server_healthy(ms))
-                    # Continue monitoring
-                    while self.is_running:
-                        time.sleep(5)
-                        try:
-                            req = urllib.request.Request(url)
-                            start = time.time()
-                            with urllib.request.urlopen(req, timeout=2) as resp:
-                                elapsed = int((time.time() - start) * 1000)
-                                if resp.status == 200:
-                                    self.root.after(0, lambda ms=elapsed: self._set_server_healthy(ms))
-                        except Exception:
-                            self.root.after(0, self._set_server_unhealthy)
-                            time.sleep(3)
-                    return
+                    if resp.status == 200:
+                        self.root.after(0, lambda ms=elapsed: self._set_server_healthy(ms))
+                        # Continue monitoring (phase 3)
+                        while self.is_running:
+                            time.sleep(5)
+                            try:
+                                req = urllib.request.Request(url)
+                                start = time.time()
+                                with urllib.request.urlopen(req, timeout=2) as resp:
+                                    elapsed = int((time.time() - start) * 1000)
+                                    if resp.status == 200:
+                                        self.root.after(0, lambda ms=elapsed: self._set_server_healthy(ms))
+                            except Exception:
+                                self.root.after(0, self._set_server_unhealthy)
+                                time.sleep(3)
+                        return
             except Exception:
+                if attempt == 1:
+                    self.root.after(0, lambda: self.server_status_var.set("⏳ 启动中…"))
                 time.sleep(1)
-        # Server didn't start in 30 seconds
-        self.root.after(0, lambda: self.server_status_var.set("⚠ 启动超时"))
+        
+        # Phase 2: Extended wait — model is still loading (every 3s)
+        self.root.after(0, lambda: self.server_status_var.set("⏳ 启动中（模型加载中…）"))
+        while self.is_running:
+            time.sleep(3)
+            try:
+                req = urllib.request.Request(url)
+                start = time.time()
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    elapsed = int((time.time() - start) * 1000)
+                    if resp.status == 200:
+                        self.root.after(0, lambda ms=elapsed: self._set_server_healthy(ms))
+                        # Enter monitoring phase
+                        while self.is_running:
+                            time.sleep(5)
+                            try:
+                                req = urllib.request.Request(url)
+                                start = time.time()
+                                with urllib.request.urlopen(req, timeout=2) as resp:
+                                    elapsed = int((time.time() - start) * 1000)
+                                    if resp.status == 200:
+                                        self.root.after(0, lambda ms=elapsed: self._set_server_healthy(ms))
+                            except Exception:
+                                self.root.after(0, self._set_server_unhealthy)
+                                time.sleep(3)
+                        return
+            except Exception:
+                pass
+        # Process stopped while waiting
+        self.root.after(0, lambda: self.server_status_var.set("⏹ 已停止"))
     
     def _set_server_healthy(self, response_ms):
         self.server_status_var.set(f"✓ 运行中 ({response_ms}ms)")
