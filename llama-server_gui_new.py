@@ -46,7 +46,20 @@ class LlamaServerGUI:
         
         # Data store for custom arguments
         self.custom_arguments = []
-        
+
+        # CPU thread detection for reference display
+        self._logical_cpus = os.cpu_count() or 32
+        self._physical_cores = self._logical_cpus
+        try:
+            import psutil
+            phys = psutil.cpu_count(logical=False)
+            if phys:
+                self._physical_cores = phys
+        except ImportError:
+            if self._logical_cpus > 4:
+                self._physical_cores = self._logical_cpus // 2
+        self._cpu_hint = f"默认 {self._physical_cores}·最多 {self._logical_cpus} 线程"
+
         # Engine management
         self.engine_dirs = []  # list of {"name": str, "dir": str, "exe": str, "source": str}
         self.selected_engine_dir = ""  # dir of currently selected engine
@@ -318,7 +331,22 @@ class LlamaServerGUI:
         self.gpu_layers = tk.IntVar(value=99)
         self.create_slider(core_group, "GPU 层数 (-ngl):", self.gpu_layers, "卸载到 GPU 的模型层数（99 = 全部）。", from_=0, to=99, resolution=1, row=1)
         self.threads = tk.StringVar(value="")
-        self.create_spinbox(core_group, "CPU 线程数 (-t):", self.threads, "使用的 CPU 线程数（例如 8）。", from_=1, to=128, increment=1, row=2)
+        spin_t = self.create_spinbox(core_group, "CPU 线程数 (-t):", self.threads, "使用的 CPU 线程数。留空=自动（默认物理核心数）。", from_=1, to=128, increment=1, row=2)
+        hint_t = ttk.Label(core_group, text=self._cpu_hint, foreground="gray")
+        hint_t.grid(row=2, column=2, sticky=tk.W, padx=(2, 2), pady=5)
+        btn_t = ttk.Button(core_group, text="设为最大", bootstyle="primary-link",
+                           command=lambda: self.threads.set(str(self._logical_cpus)))
+        btn_t.grid(row=2, column=3, sticky=tk.W, padx=2, pady=5)
+        ToolTip(btn_t, f"设置为系统最大线程数（{self._logical_cpus}）")
+        def validate_thread(*_):
+            val = self.threads.get()
+            if val and val.isdigit() and int(val) > self._logical_cpus:
+                hint_t.config(foreground="orange", text=f"⚠ 建议 ≤{self._logical_cpus}")
+            elif val and val.isdigit() and int(val) == self._logical_cpus:
+                hint_t.config(foreground="green", text=self._cpu_hint + " ✓")
+            else:
+                hint_t.config(foreground="gray", text=self._cpu_hint)
+        self.threads.trace_add("write", validate_thread)
         self.batch_size = tk.StringVar(value="")
         self.create_spinbox(core_group, "批大小 (-b):", self.batch_size, "提示处理的批大小（例如 2048）。", from_=1, to=8192, increment=1, row=3)
         self.ubatch_size = tk.StringVar(value="")
@@ -334,7 +362,22 @@ class LlamaServerGUI:
         self.cache_prompt = tk.BooleanVar(value=True)
         self.create_checkbutton(throughput_group, "提示缓存 (--cache-prompt)", self.cache_prompt, "启用提示缓存以提高重复请求的速度（默认启用）。", row=2)
         self.threads_batch = tk.StringVar(value="")
-        self.create_spinbox(core_group, "批处理线程 (-tb, --threads-batch):", self.threads_batch, "提示处理和批处理时使用的线程数（默认同 --threads）。", from_=1, to=128, increment=1, row=5)
+        spin_tb = self.create_spinbox(core_group, "批处理线程 (-tb, --threads-batch):", self.threads_batch, "提示处理和批处理时使用的线程数。留空=自动（默认同 -t）。", from_=1, to=128, increment=1, row=5)
+        hint_tb = ttk.Label(core_group, text=self._cpu_hint, foreground="gray")
+        hint_tb.grid(row=5, column=2, sticky=tk.W, padx=(2, 2), pady=5)
+        btn_tb = ttk.Button(core_group, text="设为最大", bootstyle="primary-link",
+                            command=lambda: self.threads_batch.set(str(self._logical_cpus)))
+        btn_tb.grid(row=5, column=3, sticky=tk.W, padx=2, pady=5)
+        ToolTip(btn_tb, f"设置为系统最大线程数（{self._logical_cpus}）")
+        def validate_thread_batch(*_):
+            val = self.threads_batch.get()
+            if val and val.isdigit() and int(val) > self._logical_cpus:
+                hint_tb.config(foreground="orange", text=f"⚠ 建议 ≤{self._logical_cpus}")
+            elif val and val.isdigit() and int(val) == self._logical_cpus:
+                hint_tb.config(foreground="green", text=self._cpu_hint + " ✓")
+            else:
+                hint_tb.config(foreground="gray", text=self._cpu_hint)
+        self.threads_batch.trace_add("write", validate_thread_batch)
 
     def setup_performance_advanced_tab(self, parent):
         """Configures the 'Advanced' tab for memory, optimizations, and speculative decoding."""
