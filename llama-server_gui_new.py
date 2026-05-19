@@ -1975,7 +1975,7 @@ class LlamaServerGUI:
             '--pooling': self.pooling,
             '--sleep-idle-seconds': self.sleep_idle,
             '-to': self.timeout,
-            '--tb': self.threads_batch,
+            '--threads-batch': self.threads_batch,
             '--repeat-last-n': self.repeat_last_n,
             '--frequency-penalty': self.frequency_penalty,
             '--presence-penalty': self.presence_penalty,
