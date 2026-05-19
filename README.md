@@ -1,90 +1,121 @@
 # LLaMA 服务器管理器（中文版）
 
-> 基于 [yossifibrahem/llama-cpp-GUI](https://github.com/yossifibrahem/llama-cpp-GUI) 汉化 — 图形化管理 llama.cpp 服务器
+> 基于 [yossifibrahem/llama-cpp-GUI](https://github.com/yossifibrahem/llama-cpp-GUI) 深度二次开发 — 图形化管理 llama.cpp 服务器，逐步替代 NovaMax
 
-一个功能完整的图形界面程序，用于管理和配置 `llama-server` 可执行文件。告别复杂的命令行参数，通过直观的界面轻松启动、停止和监控你的本地 LLaMA 模型服务器。
+一个功能完整的图形界面程序，用于管理 `llama-server` 全生命周期：**下载模型 → 选择引擎 → 配置参数 → 启动监控**。告别复杂的命令行参数。
 
-## 界面预览
+---
 
-| 选项卡 | 功能 |
+## 界面一览
+
+| 标签页 | 功能 |
 |--------|------|
-| 📁 **模型** | 加载 GGUF 模型、LoRA 适配器、多模态投影器 |
+| 🏪 **模型仓库** | 下载模型（ModelScope）、浏览已下载模型、多目录扫描（支持 LM Studio/NovaMax） |
+| 🖥 **引擎** | 管理多个 llama.cpp 引擎版本、切换默认引擎（自动发现 NovaMax 引擎） |
+| 📁 **模型** | 模型路径、LoRA、多模态投影器、对话模板、推理开关 |
 | ⚙️ **生成参数** | 温度、Top-K/P、重复惩罚等采样参数 |
-| 🚀 **性能** | 上下文大小、GPU 层数、批处理、持续批处理 |
-| 🔬 **高级** | Flash Attention、内存锁定、NUMA、推测解码 |
+| 🚀 **性能** | 上下文大小、GPU 层数、批处理 |
+| 🔬 **高级** | Flash Attention、推测解码（MTP/draft）、缓存类型、服务器可靠性 |
 | 🌐 **服务器与API** | 网络配置、API 密钥、自定义参数 |
-| 📊 **服务器输出** | 实时日志监控 |
+| 📊 **服务器输出** | 实时日志 | 运行状态 |
+
+---
 
 ## 功能特性
 
-- **完整配置管理** — 可视化配置所有 llama-server 参数
-- **一键启停** — 轻松管理服务器进程
-- **实时日志** — 服务器输出实时监控
-- **配置保存/加载** — JSON 格式配置持久化
-- **浏览器集成** — 一键打开 Web UI
-- **系统托盘** — 支持最小化到托盘后台运行
-- **自定义参数** — 支持 GUI 未覆盖的额外参数
+### ⬇ ModelScope 模型下载
+- **国内优先**：从 ModelScope（魔搭社区）下载模型，速度快、稳定，无需 API Key
+- **勾选框选择**：直观勾选要下载的量化版本
+- **自动关联 mmproj**：自动预勾选 BF16 版多模态投影器
+- **草稿模型下载**：支持推测解码的草稿模型下载
+- **目录结构**：下载到 `models/{命名空间}/{仓库}/`，多模型不混淆
+- **取消支持**：下载期间随时取消，自动清理临时文件
 
-## 下载与使用
+### 🏪 模型仓库管理
+- **多目录扫描**：默认 `models/` 目录 + 任意自定义目录（LM Studio、NovaMax 等）
+- **树形结构**：按仓库名称 / 目录结构分组展示
+- **元信息读取**：选中模型后自动显示架构、上下文长度、量化类型
+- **一键加载**：模型路径 / mmproj 路径一键填入配置
+- **删除文件**：确认后从磁盘删除，列表自动刷新
+- **打开目录**：在资源管理器中定位
 
-### 方案一：直接下载可执行文件
+### 🖥 引擎管理
+- **多引擎切换**：浏览已安装的 llama.cpp 引擎，选择默认引擎
+- **自动发现**：自动扫描 `engines/` 目录和 NovaMax 引擎目录
+- **后端识别**：自动识别 ROCm / Vulkan 后端类型
+- **添加自定义目录**：手动添加包含 `llama-server.exe` 的目录
 
-从 [Releases](https://github.com/jerrydong1988/llama-cpp-GUI-zh/releases) 页面下载最新版本：
+### ⚡ 服务器运行
+- **一键启停**：轻松管理服务器进程
+- **健康检查**：启动后自动 ping `/health` 端点，实时显示响应时间
+- **状态监控**：运行中 / 连接中断自动标识
+- **实时日志**：服务器输出实时监控
+- **浏览器集成**：一键打开 Web UI
 
-1. 下载 `LLaMA-Server-GUI.exe`
-2. 将 `llama-server.exe` 放在同一目录或添加到系统 PATH
-3. 双击运行 `LLaMA-Server-GUI.exe`
+### 🎛 配置管理
+- **命名配置**：保存多个命名配置（如 `mtp_qwen`、`draft_gemma`），下拉框快速切换
+- **自动加载**：配置切换时自动恢复所有参数 + 模型仓库目录
+- **JSON 持久化**：配置文件存于 `configs/` 目录，可分享、可备份
+- **自定义参数**：支持 GUI 未覆盖的额外 llama-server 参数
 
-> ⚠ `llama-server.exe` 是 llama.cpp 项目的一部分，可从 [llama.cpp releases](https://github.com/ggml-org/llama.cpp/releases) 下载。
+### 📋 其他
+- **系统托盘**：支持最小化到托盘后台运行
+- **GGUF 元信息**：直接读取 GGUF 文件头部，展示架构、上下文等
 
-### 方案二：从源码运行
+---
+
+## 从源码运行
 
 ```bash
-# 克隆仓库
 git clone https://github.com/jerrydong1988/llama-cpp-GUI-zh.git
 cd llama-cpp-GUI-zh
-
-# 安装依赖
 pip install ttkbootstrap pillow pystray
-
-# 运行
 python llama-server_gui_new.py
 ```
 
-### 方案三：自行编译 exe
+## 自行编译 exe
 
 ```bash
 pip install pyinstaller ttkbootstrap pillow pystray
 python build_exe.py
 ```
 
-编译后的 exe 位于 `dist/` 目录。
+编译后的 exe 位于 `dist/LLaMA-Server-GUI.exe`。
+
+## 目录结构
+
+```
+LLaMA-Server-GUI/
+├── llama-server_gui_new.py   # 主程序
+├── build_exe.py              # 构建脚本
+├── configs/                  # 命名配置（JSON）
+├── models/                   # 下载的模型文件
+│   └── {namespace}/{repo}/
+├── engines/                  # 引擎目录（可选）
+│   └── {version}/llama-server.exe
+└── dist/                     # 编译输出
+```
 
 ## 系统要求
 
-- Windows / Linux / macOS
+- Windows 10/11（主要支持）
 - Python 3.7+（从源码运行时）
 - `llama-server` 可执行文件
 
-## 涉及的中文汉化
+## 与原始项目的区别
 
-本仓库在原始项目基础上做了完整的中文本地化：
+本仓库在 [yossifibrahem/llama-cpp-GUI](https://github.com/yossifibrahem/llama-cpp-GUI) 基础上做了大量二次开发：
 
-- ✅ 窗口标题、选项卡名称
-- ✅ 所有按钮和标签
-- ✅ 参数分组标题
-- ✅ 所有 tooltip 提示文字
-- ✅ 消息框信息
-- ✅ 系统托盘菜单
-- ✅ 服务器运行状态提示
-
-所有 CLI 参数名（`-m`, `--temp`, `-ngl` 等）及标准术语（Flash Attention、Top-K/P、NUMA、MoE 等）保留英文，确保与 llama.cpp 官方文档兼容。
-
-汉化脚本见 `translate_zh.py`，可复用于其他版本。
-
-## 原项目
-
-本仓库是 [yossifibrahem/llama-cpp-GUI](https://github.com/yossifibrahem/llama-cpp-GUI) 的中文汉化分支，感谢原作者的出色工作。
+| 功能 | 原始项目 | 本仓库 |
+|------|----------|--------|
+| 模型下载 | ❌ | ✅ ModelScope 下载（主模型 + 草稿模型） |
+| 模型仓库 | ❌ | ✅ 多目录扫描 + 元信息 + 加载/删除 |
+| 引擎管理 | ❌ | ✅ 多版本切换 + NovaMax 自动发现 |
+| 命名配置 | ❌ | ✅ 下拉框快速切换 |
+| 健康检查 | ❌ | ✅ 自动 ping + 响应时间 |
+| GGUF 解析 | ❌ | ✅ 架构/上下文/量化展示 |
+| 中文界面 | ❌ | ✅ 完整汉化 |
+| 参数覆盖 | 部分 | ✅ MTP/推测解码等全部参数 |
 
 ## 许可证
 
