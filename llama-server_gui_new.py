@@ -91,78 +91,220 @@ class LlamaServerGUI:
         
         return os.path.join(app_dir, filename)
 
+
+    # ── 统一参数注册表 (单一数据源，取代 generate_command/save_config/load_config 三处重复) ──
+    # format: (config_key, attr_name, cli_flag, kind, default)
+    _PARAM_DEFS = [
+        ("model_path",    "model_path",    "-m",         "str",  ""),
+        ("alias",         "alias",         "-a",         "str",  ""),
+        ("lora_path",     "lora_path",     "--lora",     "str",  ""),
+        ("mmproj_path",   "mmproj_path",   "--mmproj",   "str",  ""),
+        ("chat_template", "chat_template", "--chat-template", "str", ""),
+        ("reasoning_format","reasoning_format","--reasoning-format","str",""),
+        ("reasoning_effort","reasoning_effort","--reasoning-effort","str",""),
+        ("reasoning",     "reasoning",     "--reasoning","str",  ""),
+        ("jinja",         "jinja",         "--jinja",    "bool", False),
+        ("reasoning_budget","reasoning_budget","--reasoning-budget","str",""),
+        ("ctx_size",      "ctx_size",      "-c",         "int",  4096),
+        ("gpu_layers",    "gpu_layers",    "-ngl",       "int",  99),
+        ("threads",       "threads",       "-t",         "str",  ""),
+        ("batch_size",    "batch_size",    "-b",         "str",  ""),
+        ("ubatch_size",   "ubatch_size",   "-ub",        "str",  ""),
+        ("parallel",      "parallel",      "-np",        "str",  ""),
+        ("cont_batching", "cont_batching", "-cb",        "bool", False),
+        ("cache_prompt",  "cache_prompt",  "--cache-prompt", "bool", True),
+        ("threads_batch", "threads_batch", "--threads-batch", "str", ""),
+        ("flash_attn",    "flash_attn",    "-fa",        "str",  "auto"),
+        ("moe_cpu_layers","moe_cpu_layers","--n-cpu-moe","str",  ""),
+        ("mlock",         "mlock",         "--mlock",    "bool", False),
+        ("no_mmap",       "no_mmap",       "--no-mmap",  "bool", False),
+        ("numa",          "numa",          "--numa",     "bool", False),
+        ("cache_type_k",  "cache_type_k",  "-ctk",       "str",  ""),
+        ("cache_type_v",  "cache_type_v",  "-ctv",       "str",  ""),
+        ("draft_model_path","draft_model_path","-md",    "str",  ""),
+        ("draft_gpu_layers","draft_gpu_layers","-ngld",  "str",  ""),
+        ("draft_tokens",  "draft_tokens",  "--spec-draft-n-max","str",""),
+        ("spec_draft_n_min","spec_draft_n_min","--spec-draft-n-min","str",""),
+        ("spec_type",     "spec_type",     "--spec-type","str",  ""),
+        ("host",          "host",          "--host",     "str",  "127.0.0.1"),
+        ("port",          "port",          "--port",     "str",  "8080"),
+        ("api_key",       "api_key",       "--api-key",  "str",  ""),
+        ("ssl_key_file",  "ssl_key_file",  "--ssl-key-file","str",""),
+        ("ssl_cert_file", "ssl_cert_file", "--ssl-cert-file","str",""),
+        ("no_webui",      "no_webui",      "--no-webui", "bool", False),
+        ("embedding",     "embedding",     "--embedding","bool", False),
+        ("pooling",       "pooling",       "--pooling",  "str",  ""),
+        ("reranking",     "reranking",     "--reranking","bool", False),
+        ("verbose",       "verbose",       "-v",         "bool", False),
+        ("timeout",       "timeout",       "-to",        "str",  ""),
+        ("sleep_idle",    "sleep_idle",    "--sleep-idle-seconds","str",""),
+        ("context_shift", "context_shift", "--context-shift","bool",False),
+        ("n_predict",     "n_predict",     "-n",         "str",  ""),
+        ("ignore_eos",    "ignore_eos",    "--ignore-eos","bool", False),
+        ("json_schema",   "json_schema",   "--json-schema","str", ""),
+        ("grammar_file",  "grammar_file",  "--grammar-file","str",""),
+        ("temp",          "temp",          "--temp",     "str",  ""),
+        ("top_k",         "top_k",         "--top-k",    "str",  ""),
+        ("top_p",         "top_p",         "--top-p",    "str",  ""),
+        ("repeat_penalty","repeat_penalty","--repeat-penalty","str",""),
+        ("seed",          "seed",          "--seed",     "str",  ""),
+        ("min_p",         "min_p",         "--min-p",    "str",  ""),
+        ("presence_penalty","presence_penalty","--presence-penalty","str",""),
+        ("frequency_penalty","frequency_penalty","--frequency-penalty","str",""),
+        ("repeat_last_n", "repeat_last_n", "--repeat-last-n","str",""),
+        ("mirostat",      "mirostat",      "--mirostat", "str",  ""),
+        ("mirostat_lr",   "mirostat_lr",   "--mirostat-lr","str", ""),
+        ("mirostat_ent",  "mirostat_ent",  "--mirostat-ent","str",""),
+        ("xtc_probability","xtc_probability","--xtc-probability","str",""),
+        ("xtc_threshold", "xtc_threshold", "--xtc-threshold","str",""),
+        ("dynatemp_range","dynatemp_range","--dynatemp-range","str",""),
+        ("dynatemp_exp",  "dynatemp_exp",  "--dynatemp-exp","str",""),
+        ("typical_p",     "typical_p",     "--typical-p","str",  ""),
+        ("dry_multiplier","dry_multiplier","--dry-multiplier","str",""),
+        ("dry_base",      "dry_base",      "--dry-base", "str",  ""),
+        ("dry_allowed_length","dry_allowed_length","--dry-allowed-length","str",""),
+        ("dry_penalty_last_n","dry_penalty_last_n","--dry-penalty-last-n","str",""),
+        ("dry_sequence_breaker","dry_sequence_breaker","--dry-sequence-breaker","str",""),
+    ]
+
+    def _get_var(self, attr_name):
+        return getattr(self, attr_name, None)
+
+    def _params_to_dict(self):
+        """Build a config dict from all registered parameters (replaces save_config repetition)."""
+        d = {}
+        for ck, an, flag, kind, default in self._PARAM_DEFS:
+            var = self._get_var(an)
+            if var is None:
+                d[ck] = default
+                continue
+            val = var.get()
+            d[ck] = val if (isinstance(val, bool) or val not in ("", None)) else default
+        return d
+
+    def _params_from_dict(self, config):
+        """Restore parameters from a config dict (replaces load_config repetition)."""
+        for ck, an, flag, kind, default in self._PARAM_DEFS:
+            var = self._get_var(an)
+            if var is None:
+                continue
+            val = config.get(ck, default)
+            if kind == "bool":
+                var.set(bool(val))
+            elif kind == "int":
+                try:
+                    var.set(int(val))
+                except (ValueError, TypeError):
+                    var.set(default)
+            else:
+                var.set(str(val) if val else str(default))
+
     def setup_ui(self):
-        """Sets up the main UI layout, including notebook and control buttons."""
-        main_container = ttk.Frame(self.root, padding="10")
-        main_container.pack(fill=tk.BOTH, expand=True)
-
-        # --- Control Buttons (Packed FIRST and anchored to the BOTTOM) ---
-        control_frame = ttk.Frame(main_container)
-        control_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
-
-        # Left-aligned buttons
-        left_button_frame = ttk.Frame(control_frame)
-        left_button_frame.pack(side=tk.LEFT)
+        """Sets up the main UI: sidebar navigation + content panels + bottom bar."""
+        # ── Theme (dark) ──
+        self.root.style.theme_use("darkly")
         
-        # Config management: dropdown + save + delete
-        ttk.Label(left_button_frame, text="配置:").pack(side=tk.LEFT, padx=(0, 3))
-        self.config_combo = ttk.Combobox(left_button_frame, values=[], width=22, state="readonly")
+        # ── Top Header Bar ──
+        header = ttk.Frame(self.root, padding="10 8")
+        header.pack(fill=tk.X)
+        ttk.Label(header, text="🔧 LLaMA 服务器管理器", font=("", 14, "bold")).pack(side=tk.LEFT)
+        ttk.Label(header, text="v1.3.0", foreground="gray", font=("", 9)).pack(side=tk.LEFT, padx=(8, 0))
+        
+        # ── Main: Sidebar + Content ──
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 0))
+        
+        # Left: Sidebar navigation (narrow)
+        sidebar = ttk.Frame(main_frame, width=180)
+        sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
+        sidebar.pack_propagate(False)
+        
+        # Sidebar header
+        ttk.Label(sidebar, text="导航", font=("", 9, "bold")).pack(anchor=tk.W, padx=5, pady=(0, 8))
+        
+        # Navigation tree
+        self.nav_tree = ttk.Treeview(sidebar, columns=(), show='tree', selectmode='browse', height=20)
+        self.nav_tree.pack(fill=tk.BOTH, expand=True)
+        
+        # Define sections: (iid, text, parent, setup_method, pack_direction)
+        self._nav_sections = {}
+        sections = [
+            ("models",    "📁 模型与参数",    "",              "setup_model_tab",              "pack"),
+            ("gen",       "⚙️ 生成参数",      "",              "setup_generation_tab",         "pack"),
+            ("perf",      "🚀 性能",          "",              "setup_performance_core_tab",   "pack"),
+            ("advanced",  "🔬 高级",          "",              "setup_performance_advanced_tab","pack"),
+            ("api",       "🌐 网络与API",     "",              "setup_server_api_tab",         "grid"),
+            ("repo",      "🏪 模型仓库",       "",              "setup_model_repo_tab",         "grid"),
+            ("engine",    "🖥 引擎管理",       "",              "setup_engine_tab",             "grid"),
+            ("output",    "📊 服务器输出",     "",              "setup_output_tab",             "pack"),
+        ]
+        
+        for iid, text, parent, method, _ in sections:
+            self.nav_tree.insert(parent, tk.END, iid=iid, text=text)
+        
+        self.nav_tree.bind("<<TreeviewSelect>>", self._on_nav_select)
+        
+        # Right: Content area (panels stacked, one visible at a time)
+        self.content_frame = ttk.Frame(main_frame)
+        self.content_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Create all content panels (initially hidden)
+        self._panels = {}
+        for iid, text, parent, method, pack_dir in sections:
+            panel = ttk.Frame(self.content_frame, padding="10")
+            self._panels[iid] = panel
+            # Populate via the original setup method
+            getattr(self, method)(panel)
+        
+        # Show first panel by default
+        self.nav_tree.selection_set("models")
+        self._show_panel("models")
+        
+        # ── Bottom: Fixed control bar ──
+        bottom_bar = ttk.Frame(self.root, padding="10 10")
+        bottom_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Left: config management
+        left_grp = ttk.Frame(bottom_bar)
+        left_grp.pack(side=tk.LEFT)
+        ttk.Label(left_grp, text="配置:").pack(side=tk.LEFT, padx=(0, 3))
+        self.config_combo = ttk.Combobox(left_grp, values=[], width=22, state="readonly")
         self.config_combo.pack(side=tk.LEFT, padx=(0, 5))
         self.config_combo.bind('<<ComboboxSelected>>', self._on_config_select)
         ToolTip(self.config_combo, "选择保存的配置，自动加载。")
+        self.create_button(left_grp, "💾 保存", self.save_named_config, "以当前名称保存配置。", bootstyle="secondary")
+        self.create_button(left_grp, "🗑 删除", self.delete_named_config, "删除选中的配置。", bootstyle="secondary")
+        self.create_button(left_grp, "⚡ 生成命令", self.show_command, "显示完整 llama-server 命令行。", bootstyle="info")
         
-        self.create_button(left_button_frame, "💾 保存", self.save_named_config, "以当前名称保存配置。", bootstyle="secondary")
-        self.create_button(left_button_frame, "🗑 删除", self.delete_named_config, "删除选中的配置。", bootstyle="secondary")
-        self.create_button(left_button_frame, "⚡ 生成命令", self.show_command, "显示将要执行的完整 llama-server 命令。", bootstyle="info")
-
-        # Right-aligned buttons
-        right_button_frame = ttk.Frame(control_frame)
-        right_button_frame.pack(side=tk.RIGHT)
-        self.browser_button = self.create_button(right_button_frame, "打开浏览器 🌐", self.open_browser, "Access the server web UI.", state=tk.DISABLED, bootstyle="primary-outline")
-        self.stop_button = self.create_button(right_button_frame, "停止服务器 ⏹️", self.stop_server, "Stop the running server process.", state=tk.DISABLED, bootstyle="danger")
-        self.start_button = self.create_button(right_button_frame, "启动服务器 ▶️", self.start_server, "Start the server with current settings.", bootstyle="success")
-        
-        # Server status indicator
+        # Right: start/stop
+        right_grp = ttk.Frame(bottom_bar)
+        right_grp.pack(side=tk.RIGHT)
         self.server_status_var = tk.StringVar(value="")
-        self.server_status_label = ttk.Label(right_button_frame, textvariable=self.server_status_var,
+        self.server_status_label = ttk.Label(right_grp, textvariable=self.server_status_var,
             font=("", 9), foreground="gray")
-        self.server_status_label.pack(side=tk.LEFT, padx=(10, 0))
-
-        # --- Notebook (Packed SECOND to fill the remaining space) ---
-        notebook = ttk.Notebook(main_container, bootstyle="primary")
-        notebook.pack(fill=tk.BOTH, expand=True)
-
-        # --- Create Tab Frames ---
-        repo_frame = ttk.Frame(notebook, padding="10")
-        engine_frame = ttk.Frame(notebook, padding="10")
-        model_frame = ttk.Frame(notebook, padding="10")
-        generation_frame = ttk.Frame(notebook, padding="10")
-        performance_core_frame = ttk.Frame(notebook, padding="10")
-        performance_advanced_frame = ttk.Frame(notebook, padding="10")
-        server_api_frame = ttk.Frame(notebook, padding="10")
-        output_frame = ttk.Frame(notebook, padding="10")
-
-        notebook.add(repo_frame, text="  模型仓库  ")
-        notebook.add(engine_frame, text="  引擎  ")
-        notebook.add(model_frame, text="  模型  ")
-        notebook.add(generation_frame, text="  生成参数  ")
-        notebook.add(performance_core_frame, text="  性能  ")
-        notebook.add(performance_advanced_frame, text="  高级  ")
-        notebook.add(server_api_frame, text="  服务器与API  ")
-        notebook.add(output_frame, text="  服务器输出  ")
-
-        # --- Populate Tabs ---
-        self.setup_model_repo_tab(repo_frame)
-        self.setup_engine_tab(engine_frame)
-        self.setup_model_tab(model_frame)
-        self.setup_generation_tab(generation_frame)
-        self.setup_performance_core_tab(performance_core_frame)
-        self.setup_performance_advanced_tab(performance_advanced_frame)
-        self.setup_server_api_tab(server_api_frame)
-        self.setup_output_tab(output_frame)
-
-
-    # --- Tab Setup Methods ---
+        self.server_status_label.pack(side=tk.LEFT, padx=(0, 8))
+        self.browser_button = self.create_button(right_grp, "打开浏览器 🌐", self.open_browser,
+            "打开服务器 Web 界面。", state=tk.DISABLED, bootstyle="primary-outline")
+        self.stop_button = self.create_button(right_grp, "停止 ⏹", self.stop_server,
+            "停止服务器。", state=tk.DISABLED, bootstyle="danger")
+        self.start_button = self.create_button(right_grp, "▶ 启动服务器", self.start_server,
+            "使用当前设置启动服务器。", bootstyle="success")
+        
+        self.root.bind('<Control-s>', lambda e: self.save_named_config())
+        self.root.bind('<Control-Shift-S>', lambda e: self.start_server() if not self.is_running else None)
+    
+    def _on_nav_select(self, event):
+        selection = self.nav_tree.selection()
+        if selection:
+            self._show_panel(selection[0])
+    
+    def _show_panel(self, iid):
+        """Show the selected content panel, hide all others."""
+        for name, panel in self._panels.items():
+            if name == iid:
+                panel.pack(fill=tk.BOTH, expand=True)
+            else:
+                panel.pack_forget()
     def setup_model_tab(self, parent):
         """Configures the 'Model' tab for model files, extensions, and chat behavior."""
         # --- Primary Model ---
@@ -2155,100 +2297,69 @@ class LlamaServerGUI:
             string_var.set(filename)
 
     def generate_command(self):
+        """Build llama-server CLI args from current parameter settings.
+        
+        Uses _PARAM_DEFS as single source of truth — no more manual arg dicts.
+        """
+        import json
         if not self.model_path.get().strip():
             Messagebox.show_error("请选择模型路径！", "错误")
             return None
         
-        # Use selected engine or fallback to PATH
         engine_path = self.engine_get_path()
         if engine_path:
             cmd = [engine_path, "-m", self.model_path.get().strip()]
         else:
             cmd = ["llama-server", "-m", self.model_path.get().strip()]
-        if not self.ctx_size_auto.get():
-            cmd.extend(['-c', str(self.ctx_size.get())])
-        cmd.extend(['-ngl', str(self.gpu_layers.get())])
         
-        args = {
-            '--host': self.host, '--port': self.port, '-a': self.alias,
-            '--api-key': self.api_key, '-t': self.threads, '-b': self.batch_size, 
-            '-np': self.parallel, '--lora': self.lora_path,
-            '--mmproj': self.mmproj_path, '--chat-template': self.chat_template,
-            '-md': self.draft_model_path, '-ngld': self.draft_gpu_layers,
-            '--spec-draft-n-max': self.draft_tokens,
-            '--spec-draft-n-min': self.spec_draft_n_min,
-            '--spec-type': self.spec_type,
-            '--reasoning': self.reasoning,
-            '--n-cpu-moe': self.moe_cpu_layers,
-            '--reasoning-format': self.reasoning_format, '-ub': self.ubatch_size,
-            '-n': self.n_predict, '--temp': self.temp, '--top-k': self.top_k,
-            '--top-p': self.top_p, '--repeat-penalty': self.repeat_penalty,
-            '--pooling': self.pooling,
-            '--sleep-idle-seconds': self.sleep_idle,
-            '-to': self.timeout,
-            '--threads-batch': self.threads_batch,
-            '--repeat-last-n': self.repeat_last_n,
-            '--frequency-penalty': self.frequency_penalty,
-            '--presence-penalty': self.presence_penalty,
-            '--min-p': self.min_p,
-            '--seed': self.seed,
-            '--mirostat': self.mirostat,
-            '--mirostat-lr': self.mirostat_lr,
-            '--mirostat-ent': self.mirostat_ent,
-            '--xtc-probability': self.xtc_probability,
-            '--xtc-threshold': self.xtc_threshold,
-            '--dynatemp-range': self.dynatemp_range,
-            '--dynatemp-exp': self.dynatemp_exp,
-            '--typical-p': self.typical_p,
-            '--dry-multiplier': self.dry_multiplier,
-            '--dry-base': self.dry_base,
-            '--dry-allowed-length': self.dry_allowed_length,
-            '--dry-penalty-last-n': self.dry_penalty_last_n,
-            '--dry-sequence-breaker': self.dry_sequence_breaker,
-            '--grammar-file': self.grammar_file,
-            '--json-schema': self.json_schema,
-            '--ssl-key-file': self.ssl_key_file,
-            '--ssl-cert-file': self.ssl_cert_file,
-            '--reasoning-budget': self.reasoning_budget,
-            '--cache-type-k': self.cache_type_k, '--cache-type-v': self.cache_type_v
-        }
-        for flag, var in args.items():
-            if var.get().strip():
-                cmd.extend([flag, var.get().strip()])
-        
-        if self.reasoning_effort.get().strip():
-            kwargs_json = json.dumps({"reasoning_effort": self.reasoning_effort.get()})
-            cmd.extend(['--chat-template-kwargs', kwargs_json])
-        
-        # Handle flash attention as a special case since it needs a value
-        if self.flash_attn.get().strip() and self.flash_attn.get().strip() != "auto":
-            cmd.extend(['-fa', self.flash_attn.get().strip()])
-        
-        bool_args = {
-            '--no-mmap': self.no_mmap,
-            '--no-webui': self.no_webui, '-cb': self.cont_batching,
-            '--mlock': self.mlock, '--embedding': self.embedding,
-            '--jinja': self.jinja, '-v': self.verbose,
-            '--reranking': self.reranking,
-            '--ignore-eos': self.ignore_eos,
-            '--context-shift': self.context_shift
-        }
-        for flag, var in bool_args.items():
-            if var.get():
+        # ── auto-generated from _PARAM_DEFS ──
+        for ck, an, flag, kind, default in self._PARAM_DEFS:
+            if ck in ("model_path", "ctx_size", "gpu_layers", "flash_attn",
+                       "reasoning_effort", "cache_prompt", "numa"):
+                continue  # handled specially below
+            
+            var = self._get_var(an)
+            if var is None:
+                continue
+            val = var.get()
+            val_s = str(val).strip() if val is not None else ""
+            
+            if kind == "bool" and val:
                 cmd.append(flag)
-
-        # Inverted logic: cache prompt is enabled by default, unchecked = --no-cache-prompt
+            elif kind == "str" and val_s and val_s != "auto":
+                cmd.extend([flag, val_s])
+            elif kind == "int" and val_s:
+                cmd.extend([flag, val_s])
+        
+        # ── special cases ──
+        # ctx_size: only if not auto
+        if not self.ctx_size_auto.get():
+            cmd.extend(["-c", str(self.ctx_size.get())])
+        cmd.extend(["-ngl", str(self.gpu_layers.get())])
+        
+        # flash_attn: only if not auto
+        fa_val = self.flash_attn.get().strip()
+        if fa_val and fa_val != "auto":
+            cmd.extend(["-fa", fa_val])
+        
+        # reasoning_effort: JSON wrapper
+        re_val = self.reasoning_effort.get().strip()
+        if re_val:
+            cmd.extend(["--chat-template-kwargs", json.dumps({"reasoning_effort": re_val})])
+        
+        # cache_prompt: inverted (default True, unchecked → --no-cache-prompt)
         if not self.cache_prompt.get():
             cmd.append("--no-cache-prompt")
-
+        
+        # numa: extends to ["--numa", "distribute"]
         if self.numa.get():
             cmd.extend(["--numa", "distribute"])
-            
-        # Add enabled custom arguments from the list
+        
+        # custom arguments (user-defined, not in PARAM_DEFS)
         for arg_item in self.custom_arguments:
             if arg_item.get("enabled", False) and arg_item.get("value", "").strip():
                 cmd.extend(arg_item["value"].strip().split())
-            
+        
         return cmd
 
     def show_command(self):
@@ -2486,51 +2597,13 @@ class LlamaServerGUI:
         saved inside a 'configs' directory next to the script (created if missing), and
         will be given a .json extension if omitted. After saving, update self.config_file.
         """
-        config = {
-            'model_path': self.model_path.get(), 'alias': self.alias.get(),
-            'lora_path': self.lora_path.get(), 'mmproj_path': self.mmproj_path.get(),
-            'chat_template': self.chat_template.get(), 'reasoning_effort': self.reasoning_effort.get(),
-            'jinja': self.jinja.get(), 'ctx_size': self.ctx_size.get(),
-            'gpu_layers': self.gpu_layers.get(), 'threads': self.threads.get(),
-            'batch_size': self.batch_size.get(), 'cont_batching': self.cont_batching.get(),
-            'parallel': self.parallel.get(), 'flash_attn': self.flash_attn.get(),
-            'mlock': self.mlock.get(), 'no_mmap': self.no_mmap.get(), 'numa': self.numa.get(),
-            'moe_cpu_layers': self.moe_cpu_layers.get(), 'draft_model_path': self.draft_model_path.get(),
-            'draft_gpu_layers': self.draft_gpu_layers.get(), 'draft_tokens': self.draft_tokens.get(),
-            'spec_type': self.spec_type.get(), 'spec_draft_n_min': self.spec_draft_n_min.get(),
-            'host': self.host.get(), 'port': self.port.get(), 'api_key': self.api_key.get(),
-            'no_webui': self.no_webui.get(), 'embedding': self.embedding.get(),
-            'verbose': self.verbose.get(), 'custom_arguments_list': self.custom_arguments,
-            'reasoning_format': self.reasoning_format.get(), 'ubatch_size': self.ubatch_size.get(),
-            'n_predict': self.n_predict.get(), 'ignore_eos': self.ignore_eos.get(),
-            'temp': self.temp.get(), 'top_k': self.top_k.get(), 'top_p': self.top_p.get(),
-            'repeat_penalty': self.repeat_penalty.get(),
-            'pooling': self.pooling.get(), 'reranking': self.reranking.get(),
-            'timeout': self.timeout.get(), 'sleep_idle': self.sleep_idle.get(),
-            'cache_prompt': self.cache_prompt.get(),
-            'threads_batch': self.threads_batch.get(),
-            'repeat_last_n': self.repeat_last_n.get(),
-            'presence_penalty': self.presence_penalty.get(), 'frequency_penalty': self.frequency_penalty.get(),
-            'seed': self.seed.get(), 'min_p': self.min_p.get(),
-            'ctx_size_auto': self.ctx_size_auto.get(),
-            'reasoning': self.reasoning.get(),
-            'engine_dir': self.selected_engine_dir,
-            'model_repo_roots': [r for r in self.model_repo_roots if not r.get('builtin')],
-            'cache_type_k': self.cache_type_k.get(), 'cache_type_v': self.cache_type_v.get(),
-            'mirostat': self.mirostat.get(), 'mirostat_lr': self.mirostat_lr.get(),
-            'mirostat_ent': self.mirostat_ent.get(),
-            'xtc_probability': self.xtc_probability.get(), 'xtc_threshold': self.xtc_threshold.get(),
-            'dynatemp_range': self.dynatemp_range.get(), 'dynatemp_exp': self.dynatemp_exp.get(),
-            'typical_p': self.typical_p.get(),
-            'dry_multiplier': self.dry_multiplier.get(), 'dry_base': self.dry_base.get(),
-            'dry_allowed_length': self.dry_allowed_length.get(),
-            'dry_penalty_last_n': self.dry_penalty_last_n.get(),
-            'dry_sequence_breaker': self.dry_sequence_breaker.get(),
-            'grammar_file': self.grammar_file.get(), 'json_schema': self.json_schema.get(),
-            'ssl_key_file': self.ssl_key_file.get(), 'ssl_cert_file': self.ssl_cert_file.get(),
-            'reasoning_budget': self.reasoning_budget.get(),
-            'context_shift': self.context_shift.get()
-        }
+        config = self._params_to_dict()
+        # Add non-PARAM_DEFS items
+        config['custom_arguments_list'] = self.custom_arguments
+        config['ctx_size_auto'] = self.ctx_size_auto.get()
+        config['engine_dir'] = self.selected_engine_dir
+        if hasattr(self, 'model_repo_roots'):
+            config['model_repo_roots'] = [r for r in self.model_repo_roots if not r.get('builtin')]
         try:
             # Determine where to save: prefer provided path, otherwise show Save As dialog
             if path is None:
@@ -2601,96 +2674,20 @@ class LlamaServerGUI:
             with open(load_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             
-            # Load values, providing defaults for missing keys
-            self.model_path.set(config.get('model_path', ''))
-            self.alias.set(config.get('alias', ''))
-            self.lora_path.set(config.get('lora_path', ''))
-            self.mmproj_path.set(config.get('mmproj_path', ''))
-            self.chat_template.set(config.get('chat_template', ''))
-            self.reasoning_effort.set(config.get('reasoning_effort', ''))
-            self.jinja.set(config.get('jinja', False))
-            self.ctx_size.set(config.get('ctx_size', 4096))
-            self.gpu_layers.set(config.get('gpu_layers', 99))
-            self.threads.set(config.get('threads', ''))
-            self.batch_size.set(config.get('batch_size', ''))
-            self.cont_batching.set(config.get('cont_batching', False))
-            self.parallel.set(config.get('parallel', ''))
-            self.flash_attn.set(config.get('flash_attn', False))
-            self.mlock.set(config.get('mlock', False))
-            self.no_mmap.set(config.get('no_mmap', False))
-            self.numa.set(config.get('numa', False))
-            self.moe_cpu_layers.set(config.get('moe_cpu_layers', ''))
-            self.draft_model_path.set(config.get('draft_model_path', ''))
-            self.draft_gpu_layers.set(config.get('draft_gpu_layers', ''))
-            self.draft_tokens.set(config.get('draft_tokens', ''))
-            self.spec_type.set(config.get('spec_type', ''))
-            self.spec_draft_n_min.set(config.get('spec_draft_n_min', ''))
-            self.host.set(config.get('host', '127.0.0.1'))
-            self.port.set(config.get('port', '8080'))
-            self.api_key.set(config.get('api_key', ''))
-            self.no_webui.set(config.get('no_webui', False))
-            self.embedding.set(config.get('embedding', False))
-            self.verbose.set(config.get('verbose', False))
-
-            # Load new custom arguments list
+            # ── auto-loaded from _PARAM_DEFS (single source of truth) ──
+            self._params_from_dict(config)
+            
+            # Non-registered params
+            self.ctx_size_auto.set(config.get('ctx_size_auto', False))
+            
+            # custom arguments
             self.custom_arguments = config.get('custom_arguments_list', [])
-            # Backward compatibility for old 'custom_args' string
             if not self.custom_arguments and 'custom_args' in config:
                 old_args_str = config['custom_args'].strip()
                 if old_args_str:
                     self.custom_arguments.append({"value": old_args_str, "enabled": True})
             self.rebuild_custom_args_list()
 
-            self.reasoning_format.set(config.get('reasoning_format', ''))
-            self.ubatch_size.set(config.get('ubatch_size', ''))
-            self.n_predict.set(config.get('n_predict', ''))
-            self.ignore_eos.set(config.get('ignore_eos', False))
-            self.temp.set(config.get('temp', ''))
-            self.top_k.set(config.get('top_k', ''))
-            self.top_p.set(config.get('top_p', ''))
-            self.repeat_penalty.set(config.get('repeat_penalty', ''))
-            self.cache_prompt.set(config.get('cache_prompt', True))
-            self.ctx_size_auto.set(config.get('ctx_size_auto', False))
-            self.reasoning.set(config.get('reasoning', ''))
-            self.reranking.set(config.get('reranking', False))
-            self.pooling.set(config.get('pooling', ''))
-            self.sleep_idle.set(config.get('sleep_idle', ''))
-            self.timeout.set(config.get('timeout', ''))
-            self.threads_batch.set(config.get('threads_batch', ''))
-            self.repeat_last_n.set(config.get('repeat_last_n', ''))
-            self.frequency_penalty.set(config.get('frequency_penalty', ''))
-            self.presence_penalty.set(config.get('presence_penalty', ''))
-            self.min_p.set(config.get('min_p', ''))
-            self.seed.set(config.get('seed', ''))
-            self.mirostat.set(config.get('mirostat', ''))
-            self.mirostat_lr.set(config.get('mirostat_lr', ''))
-            self.mirostat_ent.set(config.get('mirostat_ent', ''))
-            self.xtc_probability.set(config.get('xtc_probability', ''))
-            self.xtc_threshold.set(config.get('xtc_threshold', ''))
-            self.dynatemp_range.set(config.get('dynatemp_range', ''))
-            self.dynatemp_exp.set(config.get('dynatemp_exp', ''))
-            self.typical_p.set(config.get('typical_p', ''))
-            self.dry_multiplier.set(config.get('dry_multiplier', ''))
-            self.dry_base.set(config.get('dry_base', ''))
-            self.dry_allowed_length.set(config.get('dry_allowed_length', ''))
-            self.dry_penalty_last_n.set(config.get('dry_penalty_last_n', ''))
-            self.dry_sequence_breaker.set(config.get('dry_sequence_breaker', ''))
-            self.grammar_file.set(config.get('grammar_file', ''))
-            self.json_schema.set(config.get('json_schema', ''))
-            self.ssl_key_file.set(config.get('ssl_key_file', ''))
-            self.ssl_cert_file.set(config.get('ssl_cert_file', ''))
-            self.reasoning_budget.set(config.get('reasoning_budget', ''))
-            self.context_shift.set(config.get('context_shift', False))
-            # Load cache type settings (default: none / empty)
-            try:
-                self.cache_type_k.set(config.get('cache_type_k', ''))
-            except Exception:
-                self.cache_type_k.set('')
-            try:
-                self.cache_type_v.set(config.get('cache_type_v', ''))
-            except Exception:
-                self.cache_type_v.set('')
-            
             # Restore engine selection
             eng_dir = config.get('engine_dir', '')
             if eng_dir and os.path.isdir(eng_dir) and os.path.isfile(os.path.join(eng_dir, 'llama-server.exe')):
