@@ -208,14 +208,21 @@ class LlamaServerGUI:
 
     def setup_ui(self):
         """Sets up the main UI: sidebar navigation + content panels + bottom bar."""
-        # ── Theme (dark) ──
-        self.root.style.theme_use("darkly")
+        # ── Theme ──
+        self._theme = "darkly"
+        self.root.style.theme_use(self._theme)
         
         # ── Top Header Bar ──
         header = ttk.Frame(self.root, padding="10 8")
         header.pack(fill=tk.X)
         ttk.Label(header, text="🔧 LLaMA 服务器管理器", font=("", 14, "bold")).pack(side=tk.LEFT)
-        ttk.Label(header, text="v1.3.0", foreground="gray", font=("", 9)).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(header, text="v1.3.1", foreground="gray", font=("", 9)).pack(side=tk.LEFT, padx=(8, 0))
+        
+        # Theme toggle
+        self.theme_btn = ttk.Button(header, text="☀️ 亮色", command=self._toggle_theme,
+            bootstyle="secondary-outline")
+        self.theme_btn.pack(side=tk.RIGHT)
+        ToolTip(self.theme_btn, "在暗色/亮色主题间切换。")
         
         # ── Main: Sidebar + Content ──
         main_frame = ttk.Frame(self.root)
@@ -299,6 +306,13 @@ class LlamaServerGUI:
         
         self.root.bind('<Control-s>', lambda e: self.save_named_config())
         self.root.bind('<Control-Shift-S>', lambda e: self.start_server() if not self.is_running else None)
+    
+    def _toggle_theme(self):
+        """Toggle between darkly (dark) and flatly (light) themes."""
+        self._theme = "flatly" if self._theme == "darkly" else "darkly"
+        self.root.style.theme_use(self._theme)
+        self.theme_btn.config(
+            text="🌙 暗色" if self._theme == "darkly" else "☀️ 亮色")
     
     def _on_nav_select(self, event):
         selection = self.nav_tree.selection()
