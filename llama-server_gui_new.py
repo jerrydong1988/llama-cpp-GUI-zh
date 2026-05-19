@@ -636,6 +636,7 @@ class LlamaServerGUI:
                     with open(save_path + '.tmp', 'wb') as f:
                         while True:
                             if self._ms_cancel_event.is_set():
+                                self.root.after(0, self._dl_cleanup_cancelled)
                                 return  # cancelled
                             chunk = resp.read(chunk_size)
                             if not chunk:
@@ -666,22 +667,21 @@ class LlamaServerGUI:
         self.ms_progress['value'] = 0
         self.ms_progress_label.config(text="⏹ 已取消")
         self.ms_status_var.set("⏹ 下载已取消")
-        # Clean up temp files
+        # Clean up all completed files from this batch
         for fi_path in list(self._ms_dl_results.values()):
             if os.path.exists(fi_path):
                 try:
                     os.remove(fi_path)
                 except OSError:
                     pass
-        # Clean up current .tmp file
-        if self._ms_dl_queue:
-            repo_dir = self._ms_dl_dir
-            tmp_path = os.path.join(repo_dir, self._ms_dl_queue[0]['name'] + '.tmp')
-            if os.path.exists(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except OSError:
-                    pass
+        # Clean up all .tmp files in the download directory
+        if os.path.exists(self._ms_dl_dir):
+            for fname in os.listdir(self._ms_dl_dir):
+                if fname.endswith('.tmp'):
+                    try:
+                        os.remove(os.path.join(self._ms_dl_dir, fname))
+                    except OSError:
+                        pass
     
     def _dl_queue_failed(self, error_msg, partial_path):
         """Handle a download failure in the queue."""
