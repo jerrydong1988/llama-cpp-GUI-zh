@@ -110,18 +110,18 @@ class LlamaServerGUI:
         notebook.pack(fill=tk.BOTH, expand=True)
 
         # --- Create Tab Frames ---
-        model_frame = ttk.Frame(notebook, padding="10")
         repo_frame = ttk.Frame(notebook, padding="10")
         engine_frame = ttk.Frame(notebook, padding="10")
+        model_frame = ttk.Frame(notebook, padding="10")
         generation_frame = ttk.Frame(notebook, padding="10")
         performance_core_frame = ttk.Frame(notebook, padding="10")
         performance_advanced_frame = ttk.Frame(notebook, padding="10")
         server_api_frame = ttk.Frame(notebook, padding="10")
         output_frame = ttk.Frame(notebook, padding="10")
 
-        notebook.add(model_frame, text="  模型  ")
         notebook.add(repo_frame, text="  模型仓库  ")
         notebook.add(engine_frame, text="  引擎  ")
+        notebook.add(model_frame, text="  模型  ")
         notebook.add(generation_frame, text="  生成参数  ")
         notebook.add(performance_core_frame, text="  性能  ")
         notebook.add(performance_advanced_frame, text="  高级  ")
@@ -129,9 +129,9 @@ class LlamaServerGUI:
         notebook.add(output_frame, text="  服务器输出  ")
 
         # --- Populate Tabs ---
-        self.setup_model_tab(model_frame)
         self.setup_model_repo_tab(repo_frame)
         self.setup_engine_tab(engine_frame)
+        self.setup_model_tab(model_frame)
         self.setup_generation_tab(generation_frame)
         self.setup_performance_core_tab(performance_core_frame)
         self.setup_performance_advanced_tab(performance_advanced_frame)
@@ -157,106 +157,7 @@ class LlamaServerGUI:
         self.create_file_entry(ext_group, "LoRA 路径 (--lora):", self.lora_path, "LoRA 适配器文件的路径（可选）。", ".gguf", row=0)
         self.mmproj_path = tk.StringVar()
         self.create_file_entry(ext_group, "多模态投影器 (--mmproj):", self.mmproj_path, "多模态投影器文件的路径（视觉模型用）。", ".gguf", row=1)
-        # --- ModelScope 模型下载 ---
-        ms_group = ttk.Labelframe(parent, text="ModelScope 模型下载", padding="10")
-        ms_group.pack(fill=tk.X, pady=5)
-        ms_group.columnconfigure(1, weight=1)
         
-        self.ms_repo = tk.StringVar()
-        self.create_entry(ms_group, "ModelScope 仓库:", self.ms_repo, 
-            "ModelScope 模型仓库 ID，例如 unsloth/Qwen3.6-35B-A3B-GGUF。国内网络优先推荐。", row=0)
-        
-        # File list and download controls
-        file_ctrl_frame = ttk.Frame(ms_group)
-        file_ctrl_frame.grid(row=1, column=0, columnspan=2, sticky=tk.EW, pady=(5, 2))
-        file_ctrl_frame.columnconfigure(3, weight=1)
-        
-        self.browse_ms_btn = ttk.Button(file_ctrl_frame, text="📂 浏览文件", 
-            command=self.browse_ms_files, bootstyle="primary")
-        self.browse_ms_btn.grid(row=0, column=0, padx=(0, 5))
-        ToolTip(self.browse_ms_btn, "查询仓库中的 GGUF 模型文件列表。")
-        
-        self.download_ms_btn = ttk.Button(file_ctrl_frame, text="⬇ 下载选中", 
-            command=self.download_selected_ms_file, state=tk.DISABLED, bootstyle="success")
-        self.download_ms_btn.grid(row=0, column=1, padx=(0, 5))
-        ToolTip(self.download_ms_btn, "下载已勾选的文件。")
-        
-        self.cancel_ms_btn = ttk.Button(file_ctrl_frame, text="✕ 取消", 
-            command=self.cancel_ms_download, state=tk.DISABLED, bootstyle="danger-outline")
-        self.cancel_ms_btn.grid(row=0, column=2, padx=(0, 5))
-        ToolTip(self.cancel_ms_btn, "取消正在进行的下载。")
-        
-        self.ms_status_var = tk.StringVar(value="")
-        self.ms_status_label = ttk.Label(file_ctrl_frame, textvariable=self.ms_status_var, foreground="gray")
-        self.ms_status_label.grid(row=0, column=3, padx=(5, 0), sticky=tk.W)
-        
-        # Progress bar
-        self.ms_progress = ttk.Progressbar(ms_group, mode='determinate', value=0)
-        self.ms_progress.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(0, 2))
-        self.ms_progress_label = ttk.Label(ms_group, text="", font=("", 8))
-        self.ms_progress_label.grid(row=3, column=0, columnspan=2, sticky=tk.W)
-        
-        # Scrollable checkbox file list
-        self.ms_list_frame = ttk.Frame(ms_group)
-        self.ms_list_frame.grid(row=4, column=0, columnspan=2, sticky=tk.NSEW, pady=(5, 0))
-        ms_group.rowconfigure(4, weight=1)
-        
-        self.ms_file_canvas = tk.Canvas(self.ms_list_frame, highlightthickness=0)
-        self.ms_file_scrollbar = ttk.Scrollbar(self.ms_list_frame, orient=tk.VERTICAL, command=self.ms_file_canvas.yview)
-        self.ms_file_checkframe = ttk.Frame(self.ms_file_canvas)
-        self.ms_file_checkframe.bind("<Configure>", lambda e: self.ms_file_canvas.configure(scrollregion=self.ms_file_canvas.bbox("all")))
-        self.ms_file_canvas.create_window((0, 0), window=self.ms_file_checkframe, anchor="nw")
-        self.ms_file_canvas.configure(yscrollcommand=self.ms_file_scrollbar.set)
-        
-        self.ms_file_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.ms_file_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Bind mousewheel to canvas
-        def _on_mousewheel(event):
-            self.ms_file_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        self.ms_file_canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
-        self._ms_mousewheel_binding = _on_mousewheel
-        
-        # Store checkbox variables: list of (tk.BooleanVar, file_info_dict)
-        self.ms_file_vars = []  # replaces ms_file_data
-
-        # --- Draft Model Download (子区域) ---
-        draft_ms_group = ttk.Labelframe(ms_group, text="草稿模型下载（推测解码用）", padding="8")
-        draft_ms_group.grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(8, 0))
-        draft_ms_group.columnconfigure(1, weight=1)
-        
-        self.draft_ms_repo = tk.StringVar()
-        self.create_entry(draft_ms_group, "草稿仓库:", self.draft_ms_repo,
-            "草稿模型 ModelScope 仓库 ID，例如 unsloth/Qwen2.5-0.5B-GGUF。下载后自动填入草稿模型路径。", row=0)
-        
-        # Draft controls
-        draft_ctrl = ttk.Frame(draft_ms_group)
-        draft_ctrl.grid(row=1, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0))
-        
-        self.draft_browse_btn = ttk.Button(draft_ctrl, text="📂 浏览文件",
-            command=self.draft_browse_files, bootstyle="primary")
-        self.draft_browse_btn.pack(side=tk.LEFT, padx=(0, 5))
-        ToolTip(self.draft_browse_btn, "查询草稿模型仓库的 GGUF 文件列表。")
-        
-        self.draft_dl_btn = ttk.Button(draft_ctrl, text="⬇ 下载选中",
-            command=self.draft_download, state=tk.DISABLED, bootstyle="success")
-        self.draft_dl_btn.pack(side=tk.LEFT, padx=(0, 5))
-        ToolTip(self.draft_dl_btn, "下载已勾选的草稿模型文件。")
-        
-        self.draft_status_var = tk.StringVar(value="")
-        self.draft_status_lbl = ttk.Label(draft_ctrl, textvariable=self.draft_status_var, foreground="gray")
-        self.draft_status_lbl.pack(side=tk.LEFT, padx=(5, 0))
-        
-        # Draft file list (compact)
-        self.draft_list_frame = ttk.Frame(draft_ms_group)
-        self.draft_list_frame.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(3, 0))
-        
-        self.draft_listbox = tk.Listbox(self.draft_list_frame, height=3, font=("Consolas", 8))
-        self.draft_listbox.pack(fill=tk.X, expand=True)
-        self.draft_listbox.bind('<<ListboxSelect>>', self._on_draft_select)
-        
-        self.draft_file_data = []  # list of file info dicts
-
 
         # --- Chat Behavior ---
         chat_group = ttk.Labelframe(parent, text="对话行为", padding="10")
@@ -473,11 +374,101 @@ class LlamaServerGUI:
     def setup_model_repo_tab(self, parent):
         """Model repository tab - browse and manage downloaded models from multiple sources."""
         parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(0, weight=1)
+        parent.rowconfigure(2, weight=1)  # main_frame (row 2) should expand
         
+        # === Top: ModelScope 在线下载 ===
+        dl_frame = ttk.Frame(parent)
+        dl_frame.grid(row=0, column=0, sticky=tk.NSEW)
+        dl_frame.columnconfigure(1, weight=1)
+        
+        # --- Main Model Download ---
+        ms_group = ttk.Labelframe(dl_frame, text="ModelScope 模型下载", padding="8")
+        ms_group.grid(row=0, column=0, columnspan=2, sticky=tk.EW, pady=(0, 5))
+        ms_group.columnconfigure(1, weight=1)
+        
+        self.ms_repo = tk.StringVar()
+        self.create_entry(ms_group, "主模型仓库:", self.ms_repo, 
+            "ModelScope 模型仓库 ID，例如 unsloth/Qwen3.6-35B-A3B-GGUF。", row=0)
+        
+        file_ctrl_frame = ttk.Frame(ms_group)
+        file_ctrl_frame.grid(row=1, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0))
+        file_ctrl_frame.columnconfigure(3, weight=1)
+        
+        self.browse_ms_btn = ttk.Button(file_ctrl_frame, text="📂 浏览文件", 
+            command=self.browse_ms_files, bootstyle="primary")
+        self.browse_ms_btn.grid(row=0, column=0, padx=(0, 5))
+        ToolTip(self.browse_ms_btn, "查询仓库中的 GGUF 模型文件列表。")
+        
+        self.download_ms_btn = ttk.Button(file_ctrl_frame, text="⬇ 下载选中", 
+            command=self.download_selected_ms_file, state=tk.DISABLED, bootstyle="success")
+        self.download_ms_btn.grid(row=0, column=1, padx=(0, 5))
+        ToolTip(self.download_ms_btn, "下载已勾选的文件。")
+        
+        self.cancel_ms_btn = ttk.Button(file_ctrl_frame, text="✕ 取消", 
+            command=self.cancel_ms_download, state=tk.DISABLED, bootstyle="danger-outline")
+        self.cancel_ms_btn.grid(row=0, column=2, padx=(0, 5))
+        ToolTip(self.cancel_ms_btn, "取消正在进行的下载。")
+        
+        self.ms_status_var = tk.StringVar(value="")
+        self.ms_status_label = ttk.Label(file_ctrl_frame, textvariable=self.ms_status_var, foreground="gray")
+        self.ms_status_label.grid(row=0, column=3, padx=(5, 0), sticky=tk.W)
+        
+        self.ms_progress = ttk.Progressbar(ms_group, mode='determinate', value=0)
+        self.ms_progress.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(2, 2))
+        self.ms_progress_label = ttk.Label(ms_group, text="", font=("", 8))
+        self.ms_progress_label.grid(row=3, column=0, columnspan=2, sticky=tk.W)
+        
+        self.ms_list_frame = ttk.Frame(ms_group)
+        self.ms_list_frame.grid(row=4, column=0, columnspan=2, sticky=tk.NSEW, pady=(2, 0))
+        ms_group.rowconfigure(4, weight=1)
+        
+        self.ms_file_canvas = tk.Canvas(self.ms_list_frame, highlightthickness=0)
+        self.ms_file_scrollbar = ttk.Scrollbar(self.ms_list_frame, orient=tk.VERTICAL, command=self.ms_file_canvas.yview)
+        self.ms_file_checkframe = ttk.Frame(self.ms_file_canvas)
+        self.ms_file_checkframe.bind("<Configure>", lambda e: self.ms_file_canvas.configure(scrollregion=self.ms_file_canvas.bbox("all")))
+        self.ms_file_canvas.create_window((0, 0), window=self.ms_file_checkframe, anchor="nw")
+        self.ms_file_canvas.configure(yscrollcommand=self.ms_file_scrollbar.set)
+        self.ms_file_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.ms_file_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        def _on_mw(event):
+            self.ms_file_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self.ms_file_canvas.bind_all("<MouseWheel>", _on_mw, add="+")
+        self._ms_mousewheel_binding = _on_mw
+        
+        self.ms_file_vars = []
+        
+        # --- Draft Model Download ---
+        dg = ttk.Labelframe(dl_frame, text="草稿模型下载（推测解码用）", padding="6")
+        dg.grid(row=1, column=0, columnspan=2, sticky=tk.EW)
+        dg.columnconfigure(1, weight=1)
+        
+        self.draft_ms_repo = tk.StringVar()
+        self.create_entry(dg, "草稿仓库:", self.draft_ms_repo,
+            "草稿模型 ModelScope 仓库 ID，例如 unsloth/Qwen2.5-0.5B-GGUF。", row=0)
+        
+        dc = ttk.Frame(dg)
+        dc.grid(row=1, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0))
+        self.draft_browse_btn = ttk.Button(dc, text="📂 浏览文件",
+            command=self.draft_browse_files, bootstyle="primary")
+        self.draft_browse_btn.pack(side=tk.LEFT, padx=(0, 5))
+        self.draft_dl_btn = ttk.Button(dc, text="⬇ 下载选中",
+            command=self.draft_download, state=tk.DISABLED, bootstyle="success")
+        self.draft_dl_btn.pack(side=tk.LEFT)
+        self.draft_status_var = tk.StringVar(value="")
+        ttk.Label(dc, textvariable=self.draft_status_var, foreground="gray").pack(side=tk.LEFT, padx=(10, 0))
+        
+        self.draft_listbox = tk.Listbox(dg, height=2, font=("Consolas", 8))
+        self.draft_listbox.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(3, 0))
+        self.draft_listbox.bind("<<ListboxSelect>>", self._on_draft_select)
+        self.draft_file_data = []
+        
+        # Separator
+        ttk.Separator(parent, orient=tk.HORIZONTAL).grid(row=1, column=0, sticky=tk.EW, pady=5)
+
         # Main container with left tree and right detail
         main_frame = ttk.Frame(parent)
-        main_frame.grid(row=0, column=0, sticky=tk.NSEW)
+        main_frame.grid(row=2, column=0, sticky=tk.NSEW)
         main_frame.columnconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=0)
         main_frame.rowconfigure(0, weight=1)
