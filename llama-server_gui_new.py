@@ -230,7 +230,7 @@ class LlamaServerGUI:
         adv_toggle_frame.grid(row=9, column=0, columnspan=3, sticky=tk.W, pady=(10, 0))
         adv_toggle = ttk.Checkbutton(adv_toggle_frame, text="▸ 高级采样", variable=self.adv_sampling_visible, bootstyle="round-toggle")
         adv_toggle.pack(side=tk.LEFT)
-        ToolTip(adv_toggle, "展开高级采样参数（Mirostat、XTC、动态温度、DRY 等）。")
+        ToolTip(adv_toggle, "展开高级采样参数。建议一次只开一组：日常用 Mirostat，长文防重复用 DRY，创意写作加 XTC。")
 
         self.adv_sampling_frame = ttk.Frame(sampling_group)
         self.adv_sampling_frame.grid(row=10, column=0, columnspan=3, sticky=tk.EW, pady=5)
@@ -248,47 +248,47 @@ class LlamaServerGUI:
         miro_group = ttk.Labelframe(self.adv_sampling_frame, text="Mirostat", padding="5")
         miro_group.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=2); row += 1
         self.mirostat = tk.StringVar()
-        self.create_combobox(miro_group, "模式 (--mirostat):", self.mirostat, "Mirostat 采样模式（0=禁用, 1=v1, 2=v2，默认 0）。", ["", "0", "1", "2"], row=0)
+        self.create_combobox(miro_group, "模式 (--mirostat):", self.mirostat, "Mirostat 自适应采样。抗重复神器——动态调节筛选力度让文本熵稳定。推荐 2（v2），搭配 lr=0.05、ent=4.0 开箱即用。0=禁用。", ["", "0", "1", "2"], row=0)
         self.mirostat_lr = tk.StringVar(value="")
-        self.create_spinbox(miro_group, "学习率 (--mirostat-lr):", self.mirostat_lr, "Mirostat 学习率（默认 0.01）。", from_=0.001, to=1, increment=0.001, row=1)
+        self.create_spinbox(miro_group, "学习率 (--mirostat-lr):", self.mirostat_lr, "Mirostat 学习率。模型多快适应文本变化。推荐 0.05~0.1（快），创作用 0.01（稳）。默认 0.01。", from_=0.001, to=1, increment=0.001, row=1)
         self.mirostat_ent = tk.StringVar(value="")
-        self.create_spinbox(miro_group, "目标熵 (--mirostat-ent):", self.mirostat_ent, "Mirostat 目标熵（默认 5.0）。", from_=0, to=10, increment=0.1, row=2)
+        self.create_spinbox(miro_group, "目标熵 (--mirostat-ent):", self.mirostat_ent, "Mirostat 目标熵。越高越随机。推荐：对话 4.0，故事 5.0，代码 3.0。默认 5.0。", from_=0, to=10, increment=0.1, row=2)
 
         # --- XTC ---
         xtc_group = ttk.Labelframe(self.adv_sampling_frame, text="XTC 采样", padding="5")
         xtc_group.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=2); row += 1
         self.xtc_probability = tk.StringVar(value="")
-        self.create_spinbox(xtc_group, "概率 (--xtc-probability):", self.xtc_probability, "XTC 采样概率（默认 0.0 = 禁用）。", from_=0, to=1, increment=0.05, row=0)
+        self.create_spinbox(xtc_group, "概率 (--xtc-probability):", self.xtc_probability, 'XTC 采样概率。以该概率排除[太 obvious]的词，迫使模型选生僻词。推荐 0.1~0.3。0.0=禁用。创意写作、角色扮演效果佳。', from_=0, to=1, increment=0.05, row=0)
         self.xtc_threshold = tk.StringVar(value="")
-        self.create_spinbox(xtc_group, "阈值 (--xtc-threshold):", self.xtc_threshold, "XTC 阈值（默认 0.1）。", from_=0, to=1, increment=0.05, row=1)
+        self.create_spinbox(xtc_group, "阈值 (--xtc-threshold):", self.xtc_threshold, 'XTC 阈值。词的概率超过此值即被视为[太 obvious]被排除。推荐 0.1~0.5。默认 0.1。', from_=0, to=1, increment=0.05, row=1)
 
         # --- Dynamic Temperature ---
         dyn_group = ttk.Labelframe(self.adv_sampling_frame, text="动态温度", padding="5")
         dyn_group.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=2); row += 1
         self.dynatemp_range = tk.StringVar(value="")
-        self.create_spinbox(dyn_group, "范围 (--dynatemp-range):", self.dynatemp_range, "动态温度范围（默认 0.0 = 禁用）。", from_=0, to=10, increment=0.1, row=0)
+        self.create_spinbox(dyn_group, "范围 (--dynatemp-range):", self.dynatemp_range, "动态温度范围。实际温度在 [temp-range, temp+range] 间自动摇摆。推荐 0.3~0.7。0.0=禁用。长文本生成效果好，开头保守中间放开。", from_=0, to=10, increment=0.1, row=0)
         self.dynatemp_exp = tk.StringVar(value="")
-        self.create_spinbox(dyn_group, "指数 (--dynatemp-exp):", self.dynatemp_exp, "动态温度指数（默认 1.0）。", from_=0, to=5, increment=0.1, row=1)
+        self.create_spinbox(dyn_group, "指数 (--dynatemp-exp):", self.dynatemp_exp, "动态温度指数。调节对概率分布宽度的敏感度。推荐 1.0。越大越敏感。默认 1.0。", from_=0, to=5, increment=0.1, row=1)
 
         # --- Typical-P ---
         typ_group = ttk.Labelframe(self.adv_sampling_frame, text="典型采样", padding="5")
         typ_group.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=2); row += 1
         self.typical_p = tk.StringVar(value="")
-        self.create_spinbox(typ_group, "Typical-P (--typical-p):", self.typical_p, "局部典型采样（默认 1.0，1.0 = 禁用）。", from_=0, to=1, increment=0.05, row=0)
+        self.create_spinbox(typ_group, "Typical-P (--typical-p):", self.typical_p, "局部典型采样。比 Top-P 更自然的选词策略，只选概率和信息量匹配的 typical 词。推荐 0.9~0.95。1.0=禁用。搭配 Mirostat 效果更好。", from_=0, to=1, increment=0.05, row=0)
 
         # --- DRY ---
         dry_group = ttk.Labelframe(self.adv_sampling_frame, text="DRY 采样", padding="5")
         dry_group.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=2); row += 1
         self.dry_multiplier = tk.StringVar(value="")
-        self.create_spinbox(dry_group, "倍数 (--dry-multiplier):", self.dry_multiplier, "DRY 重复惩罚倍数（默认 0.0 = 禁用）。", from_=0, to=10, increment=0.1, row=0)
+        self.create_spinbox(dry_group, "倍数 (--dry-multiplier):", self.dry_multiplier, "DRY 重复惩罚强度。检测重复短语/句式并降权，比 --repeat-penalty 更智能。推荐 0.8~1.2。0.0=禁用。长文防重复神器。", from_=0, to=10, increment=0.1, row=0)
         self.dry_base = tk.StringVar(value="")
-        self.create_spinbox(dry_group, "基数 (--dry-base):", self.dry_base, "DRY 惩罚基数（默认 1.75）。", from_=0, to=10, increment=0.1, row=1)
+        self.create_spinbox(dry_group, "基数 (--dry-base):", self.dry_base, "DRY 惩罚增长曲线基数。通常保持默认 1.75，调高则惩罚增长更快。推荐 1.75。", from_=0, to=10, increment=0.1, row=1)
         self.dry_allowed_length = tk.StringVar(value="")
-        self.create_spinbox(dry_group, "允许长度 (--dry-allowed-length):", self.dry_allowed_length, "DRY 允许的重复长度（默认 2）。", from_=0, to=1024, increment=1, row=2)
+        self.create_spinbox(dry_group, "允许长度 (--dry-allowed-length):", self.dry_allowed_length, "DRY 允许重复的连续令牌数。推荐 2~3。设为 2 只允许 2 个词重复，更长就惩罚。默认 2。", from_=0, to=1024, increment=1, row=2)
         self.dry_penalty_last_n = tk.StringVar(value="")
-        self.create_spinbox(dry_group, "惩罚窗口 (--dry-penalty-last-n):", self.dry_penalty_last_n, "DRY 要考虑的最近令牌数（默认 -1 = 整个上下文）。", from_=-1, to=999999, increment=1, row=3)
+        self.create_spinbox(dry_group, "惩罚窗口 (--dry-penalty-last-n):", self.dry_penalty_last_n, "DRY 扫描多少最近令牌检测重复。-1=整个上下文。推荐 -1（完整检测）。", from_=-1, to=999999, increment=1, row=3)
         self.dry_sequence_breaker = tk.StringVar(value="")
-        self.create_entry(dry_group, "分隔符 (--dry-sequence-breaker):", self.dry_sequence_breaker, "DRY 序列分隔符（例如 \"\\n\"）。", row=4)
+        self.create_entry(dry_group, "分隔符 (--dry-sequence-breaker):", self.dry_sequence_breaker, 'DRY 序列分隔符。写入后遇到此字符视为打断重复（如 "\\n" 遇换行重置计数）。按需设置。', row=4)
 
 
 
