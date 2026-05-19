@@ -498,6 +498,25 @@ class LlamaServerGUI:
         monospace_font = ("Consolas", 10)
         self.output_text = ScrolledText(parent, height=20, wrap=tk.WORD, font=monospace_font, autohide=True)
         self.output_text.pack(fill=tk.BOTH, expand=True)
+        
+        # Define color tags for keyword highlighting
+        self.output_text.tag_configure("error", foreground="#e74c3c")      # red: errors
+        self.output_text.tag_configure("speed", foreground="#27ae60")      # green: tokens/s, listening
+        self.output_text.tag_configure("warn", foreground="#f39c12")       # orange: warnings
+        self.output_text.tag_configure("feature", foreground="#3498db")    # blue: MTP, flash attn, reasoning
+        self.output_text.tag_configure("normal", foreground="#7f8c8d")     # gray: default
+        
+        self._log_patterns = [
+            ("error", ["error", "fail", "panic", "fatal", "out of memory",
+                        "cudamalloc", "ggml_backend.*error", "rocm error",
+                        "could not", "unable to", "segfault", "abort", "exception"]),
+            ("speed", ["tokens/s", "server is listening", "eval time",
+                        "prompt eval", "prompt eval time", "total time"]),
+            ("warn", ["warn", "warning", "deprecated"]),
+            ("feature", ["mtp", "draft head registered", "reasoning", "flash att",
+                          "speculative", "grammar", "embedding"]),
+        ]
+        
         clear_btn = ttk.Button(parent, text="清空输出", command=self.clear_output, bootstyle="secondary-outline")
         clear_btn.pack(pady=(10, 0), anchor=tk.E)
         ToolTip(clear_btn, "清除日志输出窗口中的所有文本。")
@@ -2291,11 +2310,15 @@ class LlamaServerGUI:
         threading.Thread(target=run_server, daemon=True).start()
         
         self.is_running = True
+        self._health_check_active = True
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
         self.browser_button.config(state=tk.NORMAL)
         self.server_status_var.set("⏳ 启动中...")
         self.server_status_label.config(foreground="orange")
+        
+        import time
+        self._startup_start_time = time.perf_counter()
         
         # Capture connection info at launch time (thread-safe)
         health_host = self.host.get().strip()
@@ -2316,14 +2339,54 @@ class LlamaServerGUI:
 
     def server_stopped(self):
         self.is_running = False
+        self._health_check_active = False
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
         self.browser_button.config(state=tk.DISABLED)
-        self.server_status_var.set("")
-        self.update_output("⏹️ 服务器进程已终止。\n")
+        self.server_status_var.set("⏹ 已停止")
+        self.server_status_label.config(foreground="gray")
+        self.update_output("\n" + "=" * 80 + "\n⏹️ 服务器进程已终止。\n" + "=" * 80 + "\n", tag="normal")
 
-    def update_output(self, text):
-        self.output_text.insert(tk.END, text)
+    def update_output(self, text, tag=None):
+        """Append text to output with optional keyword highlighting.
+        
+        Lines matching known keywords are automatically colored:
+        - error patterns -> red
+        - speed/listening -> green
+        - warnings -> orange
+        - feature keywords -> blue
+        - everything else -> gray
+        If 'tag' is provided, the entire text block uses that single tag.
+        """
+        if tag:
+            self.output_text.insert(tk.END, text, tag)
+            self.output_text.see(tk.END)
+            return
+        
+        import re
+        # Split into lines to apply per-line coloring
+        lines = text.split("\n")
+        for i, line in enumerate(lines):
+            if i > 0:
+                self.output_text.insert(tk.END, "\n")
+            if not line.strip():
+                self.output_text.insert(tk.END, line)
+                continue
+            
+            # Check against patterns (first match wins)
+            matched = False
+            lower = line.lower()
+            for tag_name, patterns in self._log_patterns:
+                for pat in patterns:
+                    if re.search(pat, lower):
+                        self.output_text.insert(tk.END, line, tag_name)
+                        matched = True
+                        break
+                if matched:
+                    break
+            if not matched:
+                self.output_text.insert(tk.END, line, "normal")
+        
         self.output_text.see(tk.END)
     
     def _health_check_loop(self, host, port):
@@ -2393,7 +2456,13 @@ class LlamaServerGUI:
         self.root.after(0, lambda: self.server_status_var.set("⏹ 已停止"))
     
     def _set_server_healthy(self, response_ms):
-        self.server_status_var.set(f"✓ 运行中 ({response_ms}ms)")
+        import time
+        startup_sec = int(time.perf_counter() - self._startup_start_time) if hasattr(self, '_startup_start_time') else None
+        if startup_sec is not None and startup_sec > 0:
+            self.server_status_var.set(f"✓ 运行中 ({response_ms}ms) · 启动耗时 {startup_sec}s")
+            self.update_output(f"✓ 服务器就绪！启动耗时 {startup_sec}s\n", tag="speed")
+        else:
+            self.server_status_var.set(f"✓ 运行中 ({response_ms}ms)")
         self.server_status_label.config(foreground="green")
     
     def _set_server_unhealthy(self):
