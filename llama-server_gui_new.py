@@ -204,6 +204,43 @@ class LlamaServerGUI:
         # Store checkbox variables: list of (tk.BooleanVar, file_info_dict)
         self.ms_file_vars = []  # replaces ms_file_data
 
+        # --- Draft Model Download (子区域) ---
+        draft_ms_group = ttk.Labelframe(ms_group, text="草稿模型下载（推测解码用）", padding="8")
+        draft_ms_group.grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(8, 0))
+        draft_ms_group.columnconfigure(1, weight=1)
+        
+        self.draft_ms_repo = tk.StringVar()
+        self.create_entry(draft_ms_group, "草稿仓库:", self.draft_ms_repo,
+            "草稿模型 ModelScope 仓库 ID，例如 unsloth/Qwen2.5-0.5B-GGUF。下载后自动填入草稿模型路径。", row=0)
+        
+        # Draft controls
+        draft_ctrl = ttk.Frame(draft_ms_group)
+        draft_ctrl.grid(row=1, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0))
+        
+        self.draft_browse_btn = ttk.Button(draft_ctrl, text="📂 浏览文件",
+            command=self.draft_browse_files, bootstyle="primary")
+        self.draft_browse_btn.pack(side=tk.LEFT, padx=(0, 5))
+        ToolTip(self.draft_browse_btn, "查询草稿模型仓库的 GGUF 文件列表。")
+        
+        self.draft_dl_btn = ttk.Button(draft_ctrl, text="⬇ 下载选中",
+            command=self.draft_download, state=tk.DISABLED, bootstyle="success")
+        self.draft_dl_btn.pack(side=tk.LEFT, padx=(0, 5))
+        ToolTip(self.draft_dl_btn, "下载已勾选的草稿模型文件。")
+        
+        self.draft_status_var = tk.StringVar(value="")
+        self.draft_status_lbl = ttk.Label(draft_ctrl, textvariable=self.draft_status_var, foreground="gray")
+        self.draft_status_lbl.pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Draft file list (compact)
+        self.draft_list_frame = ttk.Frame(draft_ms_group)
+        self.draft_list_frame.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(3, 0))
+        
+        self.draft_listbox = tk.Listbox(self.draft_list_frame, height=3, font=("Consolas", 8))
+        self.draft_listbox.pack(fill=tk.X, expand=True)
+        self.draft_listbox.bind('<<ListboxSelect>>', self._on_draft_select)
+        
+        self.draft_file_data = []  # list of file info dicts
+
 
         # --- Chat Behavior ---
         chat_group = ttk.Labelframe(parent, text="对话行为", padding="10")
@@ -335,9 +372,8 @@ class LlamaServerGUI:
         self.spec_type = tk.StringVar()
         spec_types = ["", "none", "mtp", "ngram-cache", "ngram-simple", "ngram-map-k", "ngram-map-k4v", "ngram-mod", "draft-simple", "draft-eagle3", "draft-mtp"]
         self.create_combobox(spec_group, "推测解码类型 (--spec-type):", self.spec_type, "推测解码类型。无草稿模型时（模型自带MTP头）可选：mtp / ngram-cache / ngram-mod 等；有草稿模型时（-md 指定）可选：draft-simple / draft-eagle3 / draft-mtp。可组合多个，用逗号分隔。", spec_types, row=4)
-        self.draft_hf_repo = tk.StringVar()
-        self.create_entry(spec_group, "草稿 HF 仓库 (--hf-repo-draft):", self.draft_hf_repo, "草稿模型的 HuggingFace 仓库，例如 ggml-org/Qwen2.5-0.5B-GGUF:Q4_K_M，设置后自动下载。", row=5)
-
+        # (草稿模型下载已整合到「模型」标签页的 ModelScope 区域)
+        # --- Server Reliability ---
         # --- Server Reliability ---
         server_rel_group = ttk.Labelframe(parent, text="服务器可靠性", padding="10")
         server_rel_group.pack(fill=tk.X, pady=5)
@@ -1481,6 +1517,134 @@ class LlamaServerGUI:
         else:
             return f"{bytes_val/1024/1024/1024:.2f}GB"
 
+    # --- Draft Model Download Methods ---
+    def draft_browse_files(self):
+        """Query ModelScope API for draft model files."""
+        repo = self.draft_ms_repo.get().strip()
+        if not repo:
+            Messagebox.show_error("请先输入草稿模型仓库 ID！", "输入错误")
+            return
+        
+        self.draft_browse_btn.config(state=tk.DISABLED)
+        self.draft_status_var.set("正在查询...")
+        self.draft_listbox.delete(0, tk.END)
+        self.draft_file_data.clear()
+        self.draft_dl_btn.config(state=tk.DISABLED)
+        
+        def fetch():
+            try:
+                url = f"https://www.modelscope.cn/api/v1/models/{repo}/repo/files"
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                
+                files = data.get('Data', {}).get('Files', [])
+                ggufs = []
+                for f in files:
+                    if f.get('Type') != 'blob':
+                        continue
+                    name = f.get('Name', '')
+                    if name.endswith('.gguf') and not name.startswith('mmproj'):
+                        ggufs.append({
+                            'name': name, 'path': f.get('Path', name),
+                            'size': f.get('Size', 0)
+                        })
+                ggufs.sort(key=lambda x: x['name'])
+                self.root.after(0, lambda: self._draft_fetch_done(True, ggufs))
+            except urllib.error.URLError as e:
+                self.root.after(0, lambda: self._draft_fetch_done(False, f"网络错误：{e.reason}"))
+            except Exception as e:
+                self.root.after(0, lambda: self._draft_fetch_done(False, str(e)))
+        
+        threading.Thread(target=fetch, daemon=True).start()
+    
+    def _draft_fetch_done(self, success, result):
+        self.draft_browse_btn.config(state=tk.NORMAL)
+        if not success:
+            self.draft_status_var.set(f"❌ {result}")
+            return
+        self.draft_file_data = result
+        self.draft_listbox.delete(0, tk.END)
+        if not result:
+            self.draft_status_var.set("⚠ 未找到模型文件")
+            return
+        for f in result:
+            size = self._format_size(f['size'])
+            self.draft_listbox.insert(tk.END, f"{size:>10s}  {f['name']}")
+        self.draft_status_var.set(f"✅ {len(result)} 个模型")
+    
+    def _on_draft_select(self, event):
+        self.draft_dl_btn.config(state=tk.NORMAL if self.draft_listbox.curselection() else tk.DISABLED)
+    
+    def draft_download(self):
+        selection = self.draft_listbox.curselection()
+        if not selection:
+            return
+        idx = selection[0]
+        if idx >= len(self.draft_file_data):
+            return
+        
+        file_info = self.draft_file_data[idx]
+        repo = self.draft_ms_repo.get().strip()
+        filename = file_info['name']
+        
+        # Save to same directory structure
+        app_dir = os.path.dirname(self.get_config_path(''))
+        safe_name = repo.replace('/', os.sep)
+        dest_dir = os.path.join(app_dir, 'models', safe_name)
+        os.makedirs(dest_dir, exist_ok=True)
+        save_path = os.path.join(dest_dir, filename)
+        
+        if os.path.exists(save_path):
+            reply = Messagebox.yesno(f"文件 {filename} 已存在。\n是否覆盖？", "文件已存在", parent=self.root)
+            if not reply:
+                return
+        
+        self.draft_browse_btn.config(state=tk.DISABLED)
+        self.draft_dl_btn.config(state=tk.DISABLED)
+        self.draft_status_var.set(f"正在下载 {filename}...")
+        
+        def download():
+            try:
+                url = f"https://www.modelscope.cn/models/{repo}/resolve/main/{file_info['path']}"
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=600) as resp:
+                    chunk_size = 8 * 1024 * 1024
+                    with open(save_path + '.tmp', 'wb') as f:
+                        while True:
+                            chunk = resp.read(chunk_size)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                    os.replace(save_path + '.tmp', save_path)
+                self.root.after(0, lambda: self._draft_dl_done(True, save_path, filename))
+            except urllib.error.URLError as e:
+                self.root.after(0, lambda: self._draft_dl_done(False, f"网络错误：{e.reason}", filename))
+            except Exception as e:
+                self.root.after(0, lambda: self._draft_dl_done(False, str(e), filename))
+        
+        threading.Thread(target=download, daemon=True).start()
+    
+    def _draft_dl_done(self, success, result, filename):
+        self.draft_browse_btn.config(state=tk.NORMAL)
+        self.draft_dl_btn.config(state=tk.NORMAL)
+        if not success:
+            self.draft_status_var.set(f"❌ 下载失败：{result}")
+            app_dir = os.path.dirname(self.get_config_path(''))
+            partial = os.path.join(app_dir, 'models', self.draft_ms_repo.get().strip().replace('/', os.sep), filename + '.tmp')
+            if os.path.exists(partial):
+                try: os.remove(partial)
+                except: pass
+            return
+        
+        # Auto-fill draft model path in the Advanced tab
+        self.draft_model_path.set(result)
+        self.draft_status_var.set(f"✅ {filename} 下载完成！已填入草稿模型路径。")
+        
+        def show_msg():
+            Messagebox.ok(f"草稿模型已下载至：\n{result}\n\n已自动填入「草稿模型路径 (-md)」。\n\n前往「高级 → 推测解码」设置推测解码类型。", "下载完成", parent=self.root)
+        self.root.after(100, show_msg)
+
     # --- UI Helper Methods ---
     def create_file_entry(self, parent, label_text, string_var, tooltip_text, file_ext, row):
         label = ttk.Label(parent, text=label_text)
@@ -1675,7 +1839,7 @@ class LlamaServerGUI:
             '--spec-draft-n-min': self.spec_draft_n_min,
             '--spec-type': self.spec_type,
             '--reasoning': self.reasoning,
-            '--hf-repo-draft': self.draft_hf_repo, '--n-cpu-moe': self.moe_cpu_layers,
+            '--n-cpu-moe': self.moe_cpu_layers,
             '--reasoning-format': self.reasoning_format, '-ub': self.ubatch_size,
             '-n': self.n_predict, '--temp': self.temp, '--top-k': self.top_k,
             '--top-p': self.top_p, '--repeat-penalty': self.repeat_penalty,
