@@ -15,7 +15,7 @@ import webbrowser
 import urllib.request
 import urllib.error
 
-__version__ = "1.3.2"
+__version__ = "1.3.3"
 __repo__ = "jerrydong1988/llama-cpp-GUI-zh"
 
 try:
@@ -2694,8 +2694,7 @@ class LlamaServerGUI:
         # Determine paths
         exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
         new_exe = os.path.join(exe_dir, f"LLaMA-Server-GUI_v{version}.exe")
-        bat_path = os.path.join(exe_dir, "_update.bat")
-        current_exe = sys.executable if getattr(sys, 'frozen', False) else os.path.join(exe_dir, "LLaMA-Server-GUI.exe")
+        current_exe = sys.executable
         
         try:
             # Download with progress
@@ -2727,36 +2726,19 @@ class LlamaServerGUI:
                 for chunk in chunks:
                     f.write(chunk)
             
-            # Write self-replace batch
-            with open(bat_path, "w", encoding="utf-8") as f:
-                exe_name = os.path.basename(current_exe)
-                f.write(f"""@echo off
-chcp 65001 >nul
-echo Updating to v{version}...
-:wait
-ping 127.0.0.1 -n 2 >nul
-move /Y "{new_exe}" "{current_exe}" >nul 2>&1
-if errorlevel 1 goto wait
-echo Launching...
-cd /d "{exe_dir}"
-start "" "{exe_name}"
-del "%~f0"
-""")
+            # Save paths for user notification
             
-            self.root.after(0, lambda v=version, bp=bat_path: self._prompt_restart(v, bp))
+            self.root.after(0, lambda v=version, p=new_exe: self._notify_update_done(v, p))
         except Exception as e:
             self.root.after(0, lambda msg=str(e)[:40]: self.update_status_var.set(
                 f"❌ 更新失败: {msg}"))
     
-    def _prompt_restart(self, version, bat_path):
-        """Ask user to restart after download (runs on main thread)."""
-        self.update_status_var.set(f"✅ v{version} 下载完成 · 即将重启")
-        if Messagebox.yesno(
-            f"v{version} 下载完成。\n\n是否立即重启以完成更新？", "更新就绪"):
-            import subprocess
-            subprocess.Popen(["cmd", "/c", bat_path],
-                creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
-            self.root.after(500, self.root.destroy)
+    def _notify_update_done(self, version, new_exe):
+        """Notify user that download is complete, guide manual replacement."""
+        self.update_status_var.set(f"✅ v{version} 已下载")
+        msg = f"v{version} 已下载到:\n{new_exe}\n\n请关闭此程序，用新版 exe 替换旧版即可。\n\n点击[是]打开所在文件夹。"
+        if Messagebox.yesno(msg, "下载完成"):
+            os.startfile(os.path.dirname(new_exe))
 
 
     def save_config(self, path=None):
