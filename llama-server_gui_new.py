@@ -53,6 +53,9 @@ class LlamaServerGUI:
 
         self.setup_ui()
         self.load_config()
+        
+        # Initialize config dropdown
+        self._refresh_config_list()
 
     def get_config_path(self, filename):
         """Get the path for config file that works with PyInstaller."""
@@ -77,10 +80,17 @@ class LlamaServerGUI:
         # Left-aligned buttons
         left_button_frame = ttk.Frame(control_frame)
         left_button_frame.pack(side=tk.LEFT)
-        # Save = Save As (choose name) and Load = Browse and pick a config
-        self.create_button(left_button_frame, "另存为 💾", self.save_config, "Save the current settings to a chosen file.", bootstyle="secondary")
-        self.create_button(left_button_frame, "加载配置 📂", lambda: self.load_config(browse=True), "Browse and load a saved config.", bootstyle="secondary")
-        self.create_button(left_button_frame, "生成命令 ⚡", self.show_command, "Show the final command to be executed.", bootstyle="info")
+        
+        # Config management: dropdown + save + delete
+        ttk.Label(left_button_frame, text="配置:").pack(side=tk.LEFT, padx=(0, 3))
+        self.config_combo = ttk.Combobox(left_button_frame, values=[], width=22, state="readonly")
+        self.config_combo.pack(side=tk.LEFT, padx=(0, 5))
+        self.config_combo.bind('<<ComboboxSelected>>', self._on_config_select)
+        ToolTip(self.config_combo, "选择保存的配置，自动加载。")
+        
+        self.create_button(left_button_frame, "💾 保存", self.save_named_config, "以当前名称保存配置。", bootstyle="secondary")
+        self.create_button(left_button_frame, "🗑 删除", self.delete_named_config, "删除选中的配置。", bootstyle="secondary")
+        self.create_button(left_button_frame, "⚡ 生成命令", self.show_command, "显示将要执行的完整 llama-server 命令。", bootstyle="info")
 
         # Right-aligned buttons
         right_button_frame = ttk.Frame(control_frame)
@@ -88,6 +98,12 @@ class LlamaServerGUI:
         self.browser_button = self.create_button(right_button_frame, "打开浏览器 🌐", self.open_browser, "Access the server web UI.", state=tk.DISABLED, bootstyle="primary-outline")
         self.stop_button = self.create_button(right_button_frame, "停止服务器 ⏹️", self.stop_server, "Stop the running server process.", state=tk.DISABLED, bootstyle="danger")
         self.start_button = self.create_button(right_button_frame, "启动服务器 ▶️", self.start_server, "Start the server with current settings.", bootstyle="success")
+        
+        # Server status indicator
+        self.server_status_var = tk.StringVar(value="")
+        self.server_status_label = ttk.Label(right_button_frame, textvariable=self.server_status_var,
+            font=("", 9), foreground="gray")
+        self.server_status_label.pack(side=tk.LEFT, padx=(10, 0))
 
         # --- Notebook (Packed SECOND to fill the remaining space) ---
         notebook = ttk.Notebook(main_container, bootstyle="primary")
@@ -523,6 +539,7 @@ class LlamaServerGUI:
             ('类型', 'type', ''),
             ('来源', 'source', ''),
             ('路径', 'path', ''),
+            ('元信息', 'meta', ''),
         ]
         for label, key, default in info_fields:
             row = ttk.Frame(detail_group)
@@ -704,6 +721,13 @@ class LlamaServerGUI:
             type_display = "📄 主模型"
         self.repo_info_vars['type'].set(type_display)
         self.repo_info_vars['path'].set(item_info['path'])
+        
+        # Show GGUF metadata for model files
+        if ftype == 'model' and os.path.isfile(item_info['path']):
+            meta_str = self._get_model_metadata_display(item_info['path'])
+            self.repo_info_vars['meta'].set(meta_str)
+        else:
+            self.repo_info_vars['meta'].set('')
         
         self.repo_load_btn.config(state=tk.NORMAL if ftype == 'model' else tk.DISABLED)
         self.repo_load_mmproj_btn.config(state=tk.NORMAL if ftype == 'mmproj' else tk.DISABLED)
@@ -1660,6 +1684,120 @@ class LlamaServerGUI:
         ToolTip(entry, text=tooltip_text)
         ToolTip(browse_btn, text=f"选择一个 {file_ext} 文件。")
 
+    @staticmethod
+    def _read_gguf_metadata(filepath):
+        """Read basic GGUF metadata from the file header.
+        Returns dict with architecture, context_length, file_type, etc."""
+        import struct
+        
+        def read_string(f):
+            """Read a GGUF string: length (uint64) + UTF-8 data."""
+            length = struct.unpack('<Q', f.read(8))[0]
+            return f.read(length).decode('utf-8', errors='replace')
+        
+        def read_value(f):
+            """Read a GGUF value based on its type.
+            Returns (key, value)."""
+            val_type = struct.unpack('<I', f.read(4))[0]
+            # GGUF value types
+            TYPES = {0: 'UINT8', 1: 'INT8', 2: 'UINT16', 3: 'INT16',
+                     4: 'UINT32', 5: 'INT32', 6: 'FLOAT32', 7: 'BOOL',
+                     8: 'STRING', 9: 'ARRAY', 10: 'UINT64', 11: 'INT64',
+                     12: 'FLOAT64', 13: 'BF16'}
+            
+            if val_type == 8:  # STRING
+                return read_string(f)
+            elif val_type == 7:  # BOOL
+                return struct.unpack('<?', f.read(1))[0]
+            elif val_type in (0, 1):  # UINT8, INT8
+                return struct.unpack('<b', f.read(1))[0]
+            elif val_type in (4, 5):  # UINT32, INT32
+                return struct.unpack('<i', f.read(4))[0]
+            elif val_type in (10, 11):  # UINT64, INT64
+                return struct.unpack('<q', f.read(8))[0]
+            elif val_type == 6:  # FLOAT32
+                return struct.unpack('<f', f.read(4))[0]
+            elif val_type == 12:  # FLOAT64
+                return struct.unpack('<d', f.read(8))[0]
+            elif val_type == 9:  # ARRAY - skip
+                arr_type = struct.unpack('<I', f.read(4))[0]
+                arr_len = struct.unpack('<Q', f.read(8))[0]
+                for _ in range(arr_len):
+                    if arr_type == 8:
+                        read_string(f)
+                    elif arr_type == 4:
+                        f.read(4)
+                    else:
+                        f.read(8)
+                return None
+            else:
+                return None
+        
+        try:
+            with open(filepath, 'rb') as f:
+                magic = f.read(4)
+                if magic != b'GGUF':
+                    return None
+                
+                version = struct.unpack('<I', f.read(4))[0]
+                tensor_count = struct.unpack('<Q', f.read(8))[0]
+                metadata_count = struct.unpack('<Q', f.read(8))[0]
+                
+                meta = {}
+                for _ in range(min(metadata_count, 100)):
+                    try:
+                        key = read_string(f)
+                        val = read_value(f)
+                        if key and val is not None:  # filter to relevant keys only
+                            meta[key] = val
+                    except Exception:
+                        break
+                
+                return meta
+        except Exception:
+            return None
+
+    def _get_model_metadata_display(self, filepath):
+        """Get a human-readable string of model metadata from GGUF header."""
+        meta = self._read_gguf_metadata(filepath)
+        if not meta:
+            return "无法读取元信息"
+        
+        lines = []
+        arch = meta.get('general.architecture', '')
+        if arch:
+            lines.append(f"架构: {arch}")
+        
+        # Context length - try architecture-specific keys
+        ctx = meta.get(f'{arch}.context_length') if arch else None
+        if not ctx:
+            for k, v in meta.items():
+                if 'context_length' in k:
+                    ctx = v
+                    break
+        if ctx:
+            lines.append(f"上下文: {ctx:,} tokens")
+        
+        ftype = meta.get('general.file_type', '')
+        if ftype:
+            type_names = {1: 'F32', 2: 'F16', 3: 'Q4_0', 5: 'Q4_1', 7: 'Q8_0', 
+                         8: 'Q5_0', 9: 'Q5_1', 10: 'Q2_K', 12: 'Q3_K', 
+                         13: 'Q4_K', 14: 'Q5_K', 15: 'Q6_K', 16: 'Q8_K'}
+            lines.append(f"量化: {type_names.get(ftype, f'Type {ftype}')}")
+        
+        params = meta.get('general.size_label', '')
+        if not params and arch:
+            n_layer = meta.get(f'{arch}.block_count', 0)
+            if n_layer:
+                lines.append(f"层数: {n_layer}")
+        
+        name = meta.get('general.name', '')
+        if name:
+            lines.insert(0, f"模型: {name}")
+        
+        return " | ".join(lines) if lines else "基本元信息"
+
+
     def create_entry(self, parent, label_text, string_var, tooltip_text, row):
         label = ttk.Label(parent, text=label_text)
         label.grid(row=row, column=0, sticky=tk.W, padx=5, pady=5)
@@ -1954,6 +2092,11 @@ class LlamaServerGUI:
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
         self.browser_button.config(state=tk.NORMAL)
+        self.server_status_var.set("⏳ 启动中...")
+        self.server_status_label.config(foreground="orange")
+        
+        # Start health check thread
+        threading.Thread(target=self._health_check_loop, daemon=True).start()
 
     def stop_server(self):
         if self.server_process and self.is_running:
@@ -1968,11 +2111,60 @@ class LlamaServerGUI:
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
         self.browser_button.config(state=tk.DISABLED)
+        self.server_status_var.set("")
         self.update_output("⏹️ 服务器进程已终止。\n")
 
     def update_output(self, text):
         self.output_text.insert(tk.END, text)
         self.output_text.see(tk.END)
+    
+    def _health_check_loop(self):
+        """Periodically ping the server's health endpoint."""
+        import time
+        host = self.host.get().strip()
+        if host == '0.0.0.0': host = 'localhost'
+        port = self.port.get().strip()
+        url = f"http://{host}:{port}/health"
+        
+        # Wait for server to start (up to 30 seconds)
+        for attempt in range(30):
+            if not self.is_running:
+                return
+            try:
+                req = urllib.request.Request(url)
+                start = time.time()
+                with urllib.request.urlopen(req, timeout=2) as resp:
+                    elapsed = int((time.time() - start) * 1000)
+                    healthy = resp.status == 200
+                
+                if healthy:
+                    self.root.after(0, lambda ms=elapsed: self._set_server_healthy(ms))
+                    # Continue monitoring
+                    while self.is_running:
+                        time.sleep(5)
+                        try:
+                            req = urllib.request.Request(url)
+                            start = time.time()
+                            with urllib.request.urlopen(req, timeout=2) as resp:
+                                elapsed = int((time.time() - start) * 1000)
+                                if resp.status == 200:
+                                    self.root.after(0, lambda ms=elapsed: self._set_server_healthy(ms))
+                        except Exception:
+                            self.root.after(0, self._set_server_unhealthy)
+                            time.sleep(3)
+                    return
+            except Exception:
+                time.sleep(1)
+        # Server didn't start in 30 seconds
+        self.root.after(0, lambda: self.server_status_var.set("⚠ 启动超时"))
+    
+    def _set_server_healthy(self, response_ms):
+        self.server_status_var.set(f"✓ 运行中 ({response_ms}ms)")
+        self.server_status_label.config(foreground="green")
+    
+    def _set_server_unhealthy(self):
+        self.server_status_var.set("⚠ 连接中断")
+        self.server_status_label.config(foreground="red")
 
     def clear_output(self):
         self.output_text.delete(1.0, tk.END)
@@ -2175,6 +2367,108 @@ class LlamaServerGUI:
             self.update_all_sliders()
         except Exception as e:
             Messagebox.show_error(f"加载配置失败： {e}", "错误")
+    
+    # --- 配置管理 (Named Configs) ---
+    def _get_configs_dir(self):
+        app_dir = os.path.dirname(self.get_config_path(''))
+        return os.path.join(app_dir, 'configs')
+    
+    def _refresh_config_list(self):
+        """Scan configs/ directory and update the dropdown."""
+        configs_dir = self._get_configs_dir()
+        os.makedirs(configs_dir, exist_ok=True)
+        names = []
+        for f in sorted(os.listdir(configs_dir)):
+            if f.endswith('.json'):
+                name = f[:-5]  # remove .json
+                names.append(name)
+        self.config_combo['values'] = names
+    
+    def _on_config_select(self, event):
+        """Auto-load the selected named config."""
+        name = self.config_combo.get()
+        if not name:
+            return
+        configs_dir = self._get_configs_dir()
+        path = os.path.join(configs_dir, name + '.json')
+        if os.path.isfile(path):
+            self.load_config(path=path)
+            # Refresh config list (might have updated from another session)
+            self._refresh_config_list()
+    
+    def save_named_config(self):
+        """Save current settings as a named config."""
+        name = self.config_combo.get().strip()
+        if not name:
+            # Ask for a new name
+            dialog = ttk.Toplevel(self.root)
+            dialog.title("保存配置")
+            dialog.geometry("350x130")
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            ttk.Label(dialog, text="配置名称:", padding="10 10 0 5").pack(anchor=tk.W)
+            name_var = tk.StringVar()
+            entry = ttk.Entry(dialog, textvariable=name_var, width=30)
+            entry.pack(padx=10, pady=5, fill=tk.X)
+            entry.focus_set()
+            
+            def do_save():
+                n = name_var.get().strip()
+                if n:
+                    dialog.destroy()
+                    self._do_save_named(n)
+                else:
+                    Messagebox.show_error("名称不能为空！", "错误", parent=dialog)
+            
+            def on_key(e):
+                if e.keysym == 'Return':
+                    do_save()
+                elif e.keysym == 'Escape':
+                    dialog.destroy()
+            
+            entry.bind('<Return>', on_key)
+            entry.bind('<Escape>', on_key)
+            btn_frame = ttk.Frame(dialog)
+            btn_frame.pack(pady=10)
+            ttk.Button(btn_frame, text="确定", command=do_save, bootstyle="success").pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="取消", command=dialog.destroy, bootstyle="secondary").pack(side=tk.LEFT, padx=5)
+        else:
+            self._do_save_named(name)
+    
+    def _do_save_named(self, name):
+        """Save config with the given name."""
+        if not name:
+            return
+        configs_dir = self._get_configs_dir()
+        path = os.path.join(configs_dir, name + '.json')
+        self.save_config(path=path)
+        self._refresh_config_list()
+        self.config_combo.set(name)
+    
+    def delete_named_config(self):
+        """Delete the currently selected named config."""
+        name = self.config_combo.get().strip()
+        if not name:
+            Messagebox.show_warning("请先在配置下拉框中选择要删除的配置。", "提示")
+            return
+        reply = Messagebox.yesno(
+            f"确定删除配置「{name}」？\n此操作不可撤销。",
+            "确认删除",
+            parent=self.root
+        )
+        if not reply:
+            return
+        
+        configs_dir = self._get_configs_dir()
+        path = os.path.join(configs_dir, name + '.json')
+        try:
+            os.remove(path)
+            self._refresh_config_list()
+            self.config_combo.set('')
+            Messagebox.ok(f"配置「{name}」已删除。", "删除成功", parent=self.root)
+        except Exception as e:
+            Messagebox.show_error(f"删除失败：{e}", "错误", parent=self.root)
 
     def open_browser(self):
         host = self.host.get().strip()
