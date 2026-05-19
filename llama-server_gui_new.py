@@ -153,11 +153,16 @@ class LlamaServerGUI:
         self.download_ms_btn = ttk.Button(file_ctrl_frame, text="⬇ 下载选中", 
             command=self.download_selected_ms_file, state=tk.DISABLED, bootstyle="success")
         self.download_ms_btn.grid(row=0, column=1, padx=(0, 5))
-        ToolTip(self.download_ms_btn, "下载列表框中选中的模型文件。")
+        ToolTip(self.download_ms_btn, "下载已勾选的文件。")
+        
+        self.cancel_ms_btn = ttk.Button(file_ctrl_frame, text="✕ 取消", 
+            command=self.cancel_ms_download, state=tk.DISABLED, bootstyle="danger-outline")
+        self.cancel_ms_btn.grid(row=0, column=2, padx=(0, 5))
+        ToolTip(self.cancel_ms_btn, "取消正在进行的下载。")
         
         self.ms_status_var = tk.StringVar(value="")
         self.ms_status_label = ttk.Label(file_ctrl_frame, textvariable=self.ms_status_var, foreground="gray")
-        self.ms_status_label.grid(row=0, column=2, padx=(5, 0), sticky=tk.W)
+        self.ms_status_label.grid(row=0, column=3, padx=(5, 0), sticky=tk.W)
         
         # Progress bar
         self.ms_progress = ttk.Progressbar(ms_group, mode='determinate', value=0)
@@ -165,21 +170,29 @@ class LlamaServerGUI:
         self.ms_progress_label = ttk.Label(ms_group, text="", font=("", 8))
         self.ms_progress_label.grid(row=3, column=0, columnspan=2, sticky=tk.W)
         
-        # Scrollable file list
+        # Scrollable checkbox file list
         self.ms_list_frame = ttk.Frame(ms_group)
         self.ms_list_frame.grid(row=4, column=0, columnspan=2, sticky=tk.NSEW, pady=(5, 0))
         ms_group.rowconfigure(4, weight=1)
         
-        ms_list_scroll = ttk.Scrollbar(self.ms_list_frame, orient=tk.VERTICAL)
-        self.ms_file_listbox = tk.Listbox(self.ms_list_frame, yscrollcommand=ms_list_scroll.set,
-            height=6, font=("Consolas", 9), selectmode=tk.EXTENDED)
-        ms_list_scroll.config(command=self.ms_file_listbox.yview)
-        ms_list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.ms_file_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.ms_file_listbox.bind("<<ListboxSelect>>", self.on_ms_file_select)
+        self.ms_file_canvas = tk.Canvas(self.ms_list_frame, highlightthickness=0)
+        self.ms_file_scrollbar = ttk.Scrollbar(self.ms_list_frame, orient=tk.VERTICAL, command=self.ms_file_canvas.yview)
+        self.ms_file_checkframe = ttk.Frame(self.ms_file_canvas)
+        self.ms_file_checkframe.bind("<Configure>", lambda e: self.ms_file_canvas.configure(scrollregion=self.ms_file_canvas.bbox("all")))
+        self.ms_file_canvas.create_window((0, 0), window=self.ms_file_checkframe, anchor="nw")
+        self.ms_file_canvas.configure(yscrollcommand=self.ms_file_scrollbar.set)
         
-        # Store the file list data (list of dicts: {name, path, size})
-        self.ms_file_data = []
+        self.ms_file_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.ms_file_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Bind mousewheel to canvas
+        def _on_mousewheel(event):
+            self.ms_file_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self.ms_file_canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
+        self._ms_mousewheel_binding = _on_mousewheel
+        
+        # Store checkbox variables: list of (tk.BooleanVar, file_info_dict)
+        self.ms_file_vars = []  # replaces ms_file_data
 
 
         # --- Chat Behavior ---
@@ -395,6 +408,16 @@ class LlamaServerGUI:
         ToolTip(clear_btn, "清除日志输出窗口中的所有文本。")
 
     # --- ModelScope Download Methods ---
+    def _ms_get_repo_dir(self):
+        """Parse repo ID and return the save directory path.
+        E.g. 'unsloth/Qwen3.6-35B-A3B-GGUF' → 'models/unsloth/Qwen3.6-35B-A3B-GGUF/'
+        """
+        repo = self.ms_repo.get().strip()
+        app_dir = os.path.dirname(self.get_config_path(''))
+        # Replace / with \ for windows, normalize path
+        safe_name = repo.replace('/', os.sep).replace('\\', os.sep)
+        return os.path.join(app_dir, 'models', safe_name)
+    
     def browse_ms_files(self):
         """Query ModelScope API to list GGUF files in the specified repo."""
         repo = self.ms_repo.get().strip()
@@ -404,8 +427,11 @@ class LlamaServerGUI:
         
         self.browse_ms_btn.config(state=tk.DISABLED)
         self.ms_status_var.set("正在查询...")
-        self.ms_file_listbox.delete(0, tk.END)
-        self.ms_file_data.clear()
+        self.cancel_ms_btn.config(state=tk.DISABLED)
+        # Clear checkbox frame
+        for w in self.ms_file_checkframe.winfo_children():
+            w.destroy()
+        self.ms_file_vars.clear()
         self.download_ms_btn.config(state=tk.DISABLED)
         
         def fetch():
@@ -429,7 +455,6 @@ class LlamaServerGUI:
                     is_gguf = name.endswith('.gguf')
                     is_mmproj = is_gguf and name.startswith('mmproj')
                     is_imatrix = 'imatrix' in name.lower()
-                    # Include: GGUF models, mmproj, and imatrix files
                     if is_gguf or name.endswith('.gguf_file') or name.endswith('.txt'):
                         all_files.append({
                             'name': name,
@@ -453,12 +478,14 @@ class LlamaServerGUI:
     
     def _ms_fetch_complete(self, success, result):
         self.browse_ms_btn.config(state=tk.NORMAL)
+        # Clear previous
+        for w in self.ms_file_checkframe.winfo_children():
+            w.destroy()
+        self.ms_file_vars.clear()
+        
         if not success:
             self.ms_status_var.set(f"❌ {result}")
             return
-        
-        self.ms_file_data = result
-        self.ms_file_listbox.delete(0, tk.END)
         
         if not result:
             self.ms_status_var.set("⚠ 未找到模型文件")
@@ -467,77 +494,123 @@ class LlamaServerGUI:
         model_count = sum(1 for f in result if f['type'] == 'model')
         mmproj_count = sum(1 for f in result if f['type'] == 'mmproj')
         
+        # Auto-tick: find the first BF16 mmproj (fallback to F16)
+        auto_tick_name = None
         for f in result:
-            size_str = self._format_size(f['size'])
             if f['type'] == 'mmproj':
-                prefix = "📷"
-                display_name = f"{f['name']}  (多模态投影器)"
+                name_lower = f['name'].lower()
+                if 'bf16' in name_lower:
+                    auto_tick_name = f['name']
+                    break
+        if not auto_tick_name:
+            for f in result:
+                if f['type'] == 'mmproj':
+                    auto_tick_name = f['name']
+                    break
+        
+        # Build checkbox rows
+        for f in result:
+            var = tk.BooleanVar(value=False)
+            size_str = self._format_size(f['size'])
+            
+            # Auto-tick mmproj
+            if f['name'] == auto_tick_name:
+                var.set(True)
+            
+            # Create row
+            row = ttk.Frame(self.ms_file_checkframe)
+            row.pack(fill=tk.X, padx=2, pady=1)
+            
+            cb = ttk.Checkbutton(row, variable=var, bootstyle="round-toggle")
+            cb.pack(side=tk.LEFT)
+            
+            # Icon + file info
+            if f['type'] == 'mmproj':
+                icon = "📷"
+                type_tag = "  (多模态投影器)"
             elif f['type'] == 'imatrix':
-                prefix = "📊"
-                display_name = f"{f['name']}  (重要性矩阵)"
+                icon = "📊"
+                type_tag = "  (重要性矩阵)"
             else:
-                prefix = "  "
-                display_name = f['name']
-            self.ms_file_listbox.insert(tk.END, f"{prefix} {size_str:>10s}  {display_name}")
+                icon = "  "
+                type_tag = ""
+            
+            info_text = f"{icon} {size_str:>10s}  {f['name']}{type_tag}"
+            lbl = ttk.Label(row, text=info_text, font=("Consolas", 9), anchor=tk.W)
+            lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+            
+            self.ms_file_vars.append((var, f))
+        
+        # Enable download button if any files are checked
+        self._ms_update_dl_button()
         
         status_parts = [f"✅ 找到 {model_count} 个模型"]
         if mmproj_count:
             status_parts.append(f"{mmproj_count} 个投影器")
+        if auto_tick_name:
+            status_parts.append("投影器已预勾选")
         self.ms_status_var.set(" | ".join(status_parts))
     
-    def on_ms_file_select(self, event):
-        if self.ms_file_listbox.curselection():
-            self.download_ms_btn.config(state=tk.NORMAL)
-            # Show tooltip hint about multi-select
-            ToolTip(self.download_ms_btn, "下载选中的文件。按住 Ctrl 可多选模型+投影器一起下载。")
-        else:
-            self.download_ms_btn.config(state=tk.DISABLED)
+    def _ms_update_dl_button(self):
+        """Enable download button if any checkbox is ticked."""
+        has_checked = any(var.get() for var, _ in self.ms_file_vars)
+        self.download_ms_btn.config(state=tk.NORMAL if has_checked else tk.DISABLED)
     
     def download_selected_ms_file(self):
-        selection = self.ms_file_listbox.curselection()
-        if not selection:
-            return
-        
-        # Gather selected files
+        # Gather checked files
         files_to_dl = []
-        for idx in selection:
-            if idx < len(self.ms_file_data):
-                files_to_dl.append(self.ms_file_data[idx])
+        for var, fi in self.ms_file_vars:
+            if var.get():
+                files_to_dl.append(fi)
         
         if not files_to_dl:
+            Messagebox.show_error("请先勾选要下载的文件！", "提示")
             return
         
         repo = self.ms_repo.get().strip()
-        app_dir = os.path.dirname(self.get_config_path(''))
-        models_dir = os.path.join(app_dir, 'models')
-        os.makedirs(models_dir, exist_ok=True)
+        repo_dir = self._ms_get_repo_dir()
+        os.makedirs(repo_dir, exist_ok=True)
         
-        # Check for existing files
+        # Check existing files
         for fi in files_to_dl:
-            save_path = os.path.join(models_dir, fi['name'])
+            save_path = os.path.join(repo_dir, fi['name'])
             if os.path.exists(save_path):
                 reply = Messagebox.yesno(
-                    f"文件 {fi['name']} 已存在。\n是否覆盖？",
+                    f"文件 {fi['name']} 已存在于\n{save_path}\n是否覆盖？",
                     "文件已存在",
                     parent=self.root
                 )
                 if not reply:
                     return
         
+        # Setup cancel event
+        self._ms_cancel_event = threading.Event()
+        
         self.browse_ms_btn.config(state=tk.DISABLED)
         self.download_ms_btn.config(state=tk.DISABLED)
+        self.cancel_ms_btn.config(state=tk.NORMAL)
         self.ms_progress['value'] = 0
         
-        # Start the download queue
+        # Start download queue
         self._ms_dl_queue = list(files_to_dl)
         self._ms_dl_results = {}
         self._ms_dl_repo = repo
-        self._ms_dl_dir = models_dir
+        self._ms_dl_dir = repo_dir
         
         self._download_next_in_queue()
     
+    def cancel_ms_download(self):
+        """Cancel the current download."""
+        self._ms_cancel_event.set()
+        self.cancel_ms_btn.config(state=tk.DISABLED)
+        self.ms_progress_label.config(text="⏹ 正在取消...")
+    
     def _download_next_in_queue(self):
         """Download the next file in the queue, or finish."""
+        if self._ms_cancel_event.is_set():
+            self._dl_cleanup_cancelled()
+            return
+        
         if not self._ms_dl_queue:
             self._all_downloads_done()
             return
@@ -547,7 +620,9 @@ class LlamaServerGUI:
         filename = file_info['name']
         save_path = os.path.join(self._ms_dl_dir, filename)
         
-        self.ms_progress_label.config(text=f"正在下载 ({len(self._ms_dl_results)+1}/{len(self._ms_dl_results)+len(self._ms_dl_queue)+1}): {filename}...")
+        idx = len(self._ms_dl_results) + 1
+        total = len(self._ms_dl_results) + len(self._ms_dl_queue) + 1
+        self.ms_progress_label.config(text=f"({idx}/{total}) 正在下载 {filename}...")
         
         def download():
             try:
@@ -558,8 +633,10 @@ class LlamaServerGUI:
                     chunk_size = 8 * 1024 * 1024
                     downloaded = 0
                     
-                    with open(save_path, 'wb') as f:
+                    with open(save_path + '.tmp', 'wb') as f:
                         while True:
+                            if self._ms_cancel_event.is_set():
+                                return  # cancelled
                             chunk = resp.read(chunk_size)
                             if not chunk:
                                 break
@@ -570,19 +647,48 @@ class LlamaServerGUI:
                                 self.root.after(0, lambda p=pct, d=downloaded, t=total_size, fn=filename:
                                     self._update_dl_progress(p, d, t, fn))
                 
+                # Rename .tmp to final name on success
+                os.replace(save_path + '.tmp', save_path)
                 self._ms_dl_results[file_info['type']] = save_path
                 self.root.after(0, self._download_next_in_queue)
             except urllib.error.URLError as e:
-                self.root.after(0, lambda: self._dl_queue_failed(f"网络错误：{e.reason}", save_path))
+                self.root.after(0, lambda: self._dl_queue_failed(f"网络错误：{e.reason}", save_path + '.tmp'))
             except Exception as e:
-                self.root.after(0, lambda: self._dl_queue_failed(str(e), save_path))
+                self.root.after(0, lambda: self._dl_queue_failed(str(e), save_path + '.tmp'))
         
         threading.Thread(target=download, daemon=True).start()
     
-    def _dl_queue_failed(self, error_msg, partial_path):
-        """Handle a download failure in the queue."""
+    def _dl_cleanup_cancelled(self):
+        """Clean up after user cancelled."""
         self.browse_ms_btn.config(state=tk.NORMAL)
         self.download_ms_btn.config(state=tk.NORMAL)
+        self.cancel_ms_btn.config(state=tk.DISABLED)
+        self.ms_progress['value'] = 0
+        self.ms_progress_label.config(text="⏹ 已取消")
+        self.ms_status_var.set("⏹ 下载已取消")
+        # Clean up temp files
+        for fi_path in list(self._ms_dl_results.values()):
+            if os.path.exists(fi_path):
+                try:
+                    os.remove(fi_path)
+                except OSError:
+                    pass
+        # Clean up current .tmp file
+        if self._ms_dl_queue:
+            repo_dir = self._ms_dl_dir
+            tmp_path = os.path.join(repo_dir, self._ms_dl_queue[0]['name'] + '.tmp')
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+    
+    def _dl_queue_failed(self, error_msg, partial_path):
+        """Handle a download failure in the queue."""
+        self._ms_cancel_event.set()  # Stop any queued downloads
+        self.browse_ms_btn.config(state=tk.NORMAL)
+        self.download_ms_btn.config(state=tk.NORMAL)
+        self.cancel_ms_btn.config(state=tk.DISABLED)
         self.ms_progress['value'] = 0
         self.ms_progress_label.config(text=f"❌ 下载失败：{error_msg}")
         self.ms_status_var.set("❌ 下载失败")
@@ -591,6 +697,13 @@ class LlamaServerGUI:
                 os.remove(partial_path)
             except OSError:
                 pass
+        # Clean up already-downloaded files from this batch
+        for fi_path in list(self._ms_dl_results.values()):
+            if os.path.exists(fi_path):
+                try:
+                    os.remove(fi_path)
+                except OSError:
+                    pass
     
     def _update_dl_progress(self, pct, downloaded, total, filename):
         self.ms_progress['value'] = pct
@@ -602,6 +715,7 @@ class LlamaServerGUI:
         """All files in the queue have been downloaded."""
         self.browse_ms_btn.config(state=tk.NORMAL)
         self.download_ms_btn.config(state=tk.NORMAL)
+        self.cancel_ms_btn.config(state=tk.DISABLED)
         self.ms_progress['value'] = 0
         
         model_path = self._ms_dl_results.get('model', '')
@@ -619,14 +733,18 @@ class LlamaServerGUI:
             parts.append("(+重要性矩阵)")
         
         status = " | ".join(parts) if parts else "下载完成"
-        self.ms_progress_label.config(text=f"✅ 全部下载完成！")
+        self.ms_progress_label.config(text="✅ 全部下载完成！")
         self.ms_status_var.set(f"✅ {status}")
+        
+        # Show the save directory
+        repo_dir = self._ms_get_repo_dir()
+        self.ms_status_var.set(f"✅ 已保存至: {os.path.basename(os.path.dirname(repo_dir))}/{os.path.basename(repo_dir)}/")
         
         def show_msg():
             lines = []
             for fi_path in self._ms_dl_results.values():
                 lines.append(f"  📄 {os.path.basename(fi_path)}")
-            msg = "已下载文件：\n" + "\n".join(lines) + "\n\n模型路径和投影器路径已自动填入。"
+            msg = "已下载文件：\n" + "\n".join(lines) + f"\n\n保存目录：{repo_dir}\n\n模型路径和投影器路径已自动填入。"
             Messagebox.ok(msg, "下载完成", parent=self.root)
         self.root.after(100, show_msg)
     
