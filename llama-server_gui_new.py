@@ -83,9 +83,10 @@ class LlamaServerGUI:
         # Also trigger on startup (if model already loaded)
         self.root.after(600, self._auto_adjust_ctx_slider)
         
-        # Background update check (non-blocking)
+        # Background update check (non-blocking, delayed until UI ready)
         self._update_info = None
-        threading.Thread(target=self._check_for_update, daemon=True).start()
+        self.root.after(3000, lambda: threading.Thread(
+            target=self._check_for_update, daemon=True).start())
 
     def get_config_path(self, filename):
         """Get the path for config file that works with PyInstaller."""
