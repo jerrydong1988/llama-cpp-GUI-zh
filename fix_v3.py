@@ -21,7 +21,7 @@ for i, line in enumerate(lines):
         reasoning_block = f"""\
         self.reasoning = tk.StringVar()
         reasoning_options = ["", "on", "off", "auto"]
-        self.create_combobox(chat_group, "推理开关 (--reasoning):", self.reasoning, "启用/禁用/自动推理（思考）功能。MTP 模型建议设为 off。", reasoning_options, row=3)
+        self.create_combobox(chat_group, "推理开关 (--reasoning):", self.reasoning, "启用/禁用/自动推理（思考）功能。off 时加载更快，on 开启思考过程但加载稍慢。MTP 模型都可正常使用。", reasoning_options, row=3)
         self.jinja = tk.BooleanVar(value=False)
         self.create_checkbutton(chat_group, "启用 Jinja (--jinja)", self.jinja, "启用 Jinja2 模板（某些自定义模板需要）。", row=4)
 """

@@ -12,6 +12,8 @@ import threading
 import os
 import json
 import webbrowser
+import urllib.request
+import urllib.error
 
 try:
     import pystray
@@ -129,13 +131,55 @@ class LlamaServerGUI:
         self.create_file_entry(ext_group, "LoRA 路径 (--lora):", self.lora_path, "LoRA 适配器文件的路径（可选）。", ".gguf", row=0)
         self.mmproj_path = tk.StringVar()
         self.create_file_entry(ext_group, "多模态投影器 (--mmproj):", self.mmproj_path, "多模态投影器文件的路径（视觉模型用）。", ".gguf", row=1)
-        # --- HuggingFace Auto Download ---
-        hf_group = ttk.Labelframe(parent, text="HuggingFace 自动下载", padding="10")
-        hf_group.pack(fill=tk.X, pady=5)
-        self.hf_repo = tk.StringVar()
-        self.create_entry(hf_group, "HF 仓库 (--hf-repo):", self.hf_repo, "HuggingFace 模型仓库，例如 ggml-org/gemma-3-1b-it-GGUF:Q4_K_M，设置后自动下载。", row=0)
-        self.hf_file = tk.StringVar()
-        self.create_entry(hf_group, "HF 文件 (--hf-file):", self.hf_file, "指定仓库中的具体文件名（可选，覆盖 --hf-repo 中的量化级别）。", row=1)
+        # --- ModelScope 模型下载 ---
+        ms_group = ttk.Labelframe(parent, text="ModelScope 模型下载", padding="10")
+        ms_group.pack(fill=tk.X, pady=5)
+        ms_group.columnconfigure(1, weight=1)
+        
+        self.ms_repo = tk.StringVar()
+        self.create_entry(ms_group, "ModelScope 仓库:", self.ms_repo, 
+            "ModelScope 模型仓库 ID，例如 unsloth/Qwen3.6-35B-A3B-GGUF。国内网络优先推荐。", row=0)
+        
+        # File list and download controls
+        file_ctrl_frame = ttk.Frame(ms_group)
+        file_ctrl_frame.grid(row=1, column=0, columnspan=2, sticky=tk.EW, pady=(5, 2))
+        file_ctrl_frame.columnconfigure(3, weight=1)
+        
+        self.browse_ms_btn = ttk.Button(file_ctrl_frame, text="📂 浏览文件", 
+            command=self.browse_ms_files, bootstyle="primary")
+        self.browse_ms_btn.grid(row=0, column=0, padx=(0, 5))
+        ToolTip(self.browse_ms_btn, "查询仓库中的 GGUF 模型文件列表。")
+        
+        self.download_ms_btn = ttk.Button(file_ctrl_frame, text="⬇ 下载选中", 
+            command=self.download_selected_ms_file, state=tk.DISABLED, bootstyle="success")
+        self.download_ms_btn.grid(row=0, column=1, padx=(0, 5))
+        ToolTip(self.download_ms_btn, "下载列表框中选中的模型文件。")
+        
+        self.ms_status_var = tk.StringVar(value="")
+        self.ms_status_label = ttk.Label(file_ctrl_frame, textvariable=self.ms_status_var, foreground="gray")
+        self.ms_status_label.grid(row=0, column=2, padx=(5, 0), sticky=tk.W)
+        
+        # Progress bar
+        self.ms_progress = ttk.Progressbar(ms_group, mode='determinate', value=0)
+        self.ms_progress.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(0, 2))
+        self.ms_progress_label = ttk.Label(ms_group, text="", font=("", 8))
+        self.ms_progress_label.grid(row=3, column=0, columnspan=2, sticky=tk.W)
+        
+        # Scrollable file list
+        self.ms_list_frame = ttk.Frame(ms_group)
+        self.ms_list_frame.grid(row=4, column=0, columnspan=2, sticky=tk.NSEW, pady=(5, 0))
+        ms_group.rowconfigure(4, weight=1)
+        
+        ms_list_scroll = ttk.Scrollbar(self.ms_list_frame, orient=tk.VERTICAL)
+        self.ms_file_listbox = tk.Listbox(self.ms_list_frame, yscrollcommand=ms_list_scroll.set,
+            height=6, font=("Consolas", 9), selectmode=tk.SINGLE)
+        ms_list_scroll.config(command=self.ms_file_listbox.yview)
+        ms_list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.ms_file_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.ms_file_listbox.bind("<<ListboxSelect>>", self.on_ms_file_select)
+        
+        # Store the file list data (list of dicts: {name, path, size})
+        self.ms_file_data = []
 
 
         # --- Chat Behavior ---
@@ -155,7 +199,7 @@ class LlamaServerGUI:
         
         self.reasoning = tk.StringVar()
         reasoning_options = ["", "on", "off", "auto"]
-        self.create_combobox(chat_group, "推理开关 (--reasoning):", self.reasoning, "启用/禁用/自动推理（思考）功能。MTP 模型建议设为 off。", reasoning_options, row=3)
+        self.create_combobox(chat_group, "推理开关 (--reasoning):", self.reasoning, "启用/禁用/自动推理（思考）功能。off 时加载更快，on 开启思考过程但加载稍慢。MTP 模型都可正常使用。", reasoning_options, row=3)
         self.jinja = tk.BooleanVar(value=False)
         self.create_checkbutton(chat_group, "启用 Jinja (--jinja)", self.jinja, "启用 Jinja2 模板（某些自定义模板需要）。", row=4)
 
@@ -349,6 +393,181 @@ class LlamaServerGUI:
         clear_btn = ttk.Button(parent, text="清空输出", command=self.clear_output, bootstyle="secondary-outline")
         clear_btn.pack(pady=(10, 0), anchor=tk.E)
         ToolTip(clear_btn, "清除日志输出窗口中的所有文本。")
+
+    # --- ModelScope Download Methods ---
+    def browse_ms_files(self):
+        """Query ModelScope API to list GGUF files in the specified repo."""
+        repo = self.ms_repo.get().strip()
+        if not repo:
+            Messagebox.show_error("请先输入 ModelScope 仓库 ID！", "输入错误")
+            return
+        
+        self.browse_ms_btn.config(state=tk.DISABLED)
+        self.ms_status_var.set("正在查询...")
+        self.ms_file_listbox.delete(0, tk.END)
+        self.ms_file_data.clear()
+        self.download_ms_btn.config(state=tk.DISABLED)
+        
+        def fetch():
+            try:
+                url = f"https://www.modelscope.cn/api/v1/models/{repo}/repo/files"
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                
+                if not data.get('Success'):
+                    err_msg = data.get('Message', '未知错误')
+                    self.root.after(0, lambda: self._ms_fetch_complete(False, f"查询失败：{err_msg}"))
+                    return
+                
+                files = data.get('Data', {}).get('Files', [])
+                gguf_files = []
+                for f in files:
+                    if f.get('Type') != 'blob':
+                        continue
+                    name = f.get('Name', '')
+                    if not name.endswith('.gguf') or name.startswith('mmproj'):
+                        continue
+                    gguf_files.append({'name': name, 'path': f.get('Path', name), 'size': f.get('Size', 0)})
+                
+                gguf_files.sort(key=lambda x: x['name'])
+                self.root.after(0, lambda: self._ms_fetch_complete(True, gguf_files))
+            except urllib.error.URLError as e:
+                self.root.after(0, lambda: self._ms_fetch_complete(False, f"网络错误：{e.reason}"))
+            except Exception as e:
+                self.root.after(0, lambda: self._ms_fetch_complete(False, str(e)))
+        
+        threading.Thread(target=fetch, daemon=True).start()
+    
+    def _ms_fetch_complete(self, success, result):
+        self.browse_ms_btn.config(state=tk.NORMAL)
+        if not success:
+            self.ms_status_var.set(f"❌ {result}")
+            return
+        
+        self.ms_file_data = result
+        self.ms_file_listbox.delete(0, tk.END)
+        
+        if not result:
+            self.ms_status_var.set("⚠ 未找到 GGUF 模型文件")
+            return
+        
+        for f in result:
+            size_str = self._format_size(f['size'])
+            self.ms_file_listbox.insert(tk.END, f"{size_str:>10s}  {f['name']}")
+        
+        self.ms_status_var.set(f"✅ 找到 {len(result)} 个模型文件")
+    
+    def on_ms_file_select(self, event):
+        if self.ms_file_listbox.curselection():
+            self.download_ms_btn.config(state=tk.NORMAL)
+        else:
+            self.download_ms_btn.config(state=tk.DISABLED)
+    
+    def download_selected_ms_file(self):
+        selection = self.ms_file_listbox.curselection()
+        if not selection:
+            return
+        idx = selection[0]
+        if idx >= len(self.ms_file_data):
+            return
+        
+        file_info = self.ms_file_data[idx]
+        repo = self.ms_repo.get().strip()
+        filename = file_info['name']
+        
+        # Default save to models/ directory
+        app_dir = os.path.dirname(self.get_config_path(''))
+        models_dir = os.path.join(app_dir, 'models')
+        os.makedirs(models_dir, exist_ok=True)
+        save_path = os.path.join(models_dir, filename)
+        
+        # Check existing
+        if os.path.exists(save_path):
+            reply = Messagebox.yesno(
+                f"文件 {filename} 已存在。\n是否覆盖？",
+                "文件已存在",
+                parent=self.root
+            )
+            if not reply:
+                return
+        
+        self.browse_ms_btn.config(state=tk.DISABLED)
+        self.download_ms_btn.config(state=tk.DISABLED)
+        self.ms_progress['value'] = 0
+        self.ms_progress_label.config(text=f"准备下载 {filename}...")
+        
+        def download():
+            try:
+                url = f"https://www.modelscope.cn/models/{repo}/resolve/main/{file_info['path']}"
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=600) as resp:
+                    total_size = int(resp.headers.get('Content-Length', 0))
+                    chunk_size = 8 * 1024 * 1024  # 8MB chunks
+                    downloaded = 0
+                    
+                    with open(save_path, 'wb') as f:
+                        while True:
+                            chunk = resp.read(chunk_size)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size > 0:
+                                pct = int(downloaded * 100 / total_size)
+                                self.root.after(0, lambda p=pct, d=downloaded, t=total_size, fn=filename:
+                                    self._update_dl_progress(p, d, t, fn))
+                
+                self.root.after(0, lambda: self._download_done(True, save_path, filename))
+            except urllib.error.URLError as e:
+                self.root.after(0, lambda: self._download_done(False, f"网络错误：{e.reason}", filename))
+            except Exception as e:
+                self.root.after(0, lambda: self._download_done(False, str(e), filename))
+        
+        threading.Thread(target=download, daemon=True).start()
+    
+    def _update_dl_progress(self, pct, downloaded, total, filename):
+        self.ms_progress['value'] = pct
+        d = self._format_size(downloaded)
+        t = self._format_size(total)
+        self.ms_progress_label.config(text=f"{filename}  {d} / {t}  ({pct}%)")
+    
+    def _download_done(self, success, result, filename):
+        self.browse_ms_btn.config(state=tk.NORMAL)
+        self.download_ms_btn.config(state=tk.NORMAL)
+        self.ms_progress['value'] = 0
+        
+        if not success:
+            self.ms_progress_label.config(text=f"❌ 下载失败：{result}")
+            self.ms_status_var.set("❌ 下载失败")
+            # Clean up partial file
+            app_dir = os.path.dirname(self.get_config_path(''))
+            partial_path = os.path.join(app_dir, 'models', filename)
+            if os.path.exists(partial_path):
+                try:
+                    os.remove(partial_path)
+                except OSError:
+                    pass
+            return
+        
+        self.ms_progress_label.config(text=f"✅ {filename} 下载完成！")
+        self.ms_status_var.set("✅ 下载完成")
+        self.model_path.set(result)
+        
+        def show_msg():
+            Messagebox.ok(f"模型已下载至：\n{result}\n\n已自动填入模型路径。", "下载完成", parent=self.root)
+        self.root.after(100, show_msg)
+    
+    @staticmethod
+    def _format_size(bytes_val):
+        if bytes_val < 1024:
+            return f"{bytes_val}B"
+        elif bytes_val < 1024 * 1024:
+            return f"{bytes_val/1024:.1f}KB"
+        elif bytes_val < 1024 * 1024 * 1024:
+            return f"{bytes_val/1024/1024:.1f}MB"
+        else:
+            return f"{bytes_val/1024/1024/1024:.2f}GB"
 
     # --- UI Helper Methods ---
     def create_file_entry(self, parent, label_text, string_var, tooltip_text, file_ext, row):
@@ -552,8 +771,6 @@ class LlamaServerGUI:
             '--presence-penalty': self.presence_penalty,
             '--min-p': self.min_p,
             '--seed': self.seed,
-            '--hf-file': self.hf_file,
-            '--hf-repo': self.hf_repo,
             '--cache-type-k': self.cache_type_k, '--cache-type-v': self.cache_type_v
         }
         for flag, var in args.items():
@@ -713,7 +930,6 @@ class LlamaServerGUI:
             'seed': self.seed.get(), 'min_p': self.min_p.get(),
             'ctx_size_auto': self.ctx_size_auto.get(),
             'reasoning': self.reasoning.get(),
-            'hf_repo': self.hf_repo.get(), 'hf_file': self.hf_file.get(),
             'cache_type_k': self.cache_type_k.get(), 'cache_type_v': self.cache_type_v.get()
         }
         try:
@@ -840,8 +1056,6 @@ class LlamaServerGUI:
             self.sleep_idle.set(config.get('sleep_idle', ''))
             self.timeout.set(config.get('timeout', ''))
             self.threads_batch.set(config.get('threads_batch', ''))
-            self.hf_file.set(config.get('hf_file', ''))
-            self.hf_repo.set(config.get('hf_repo', ''))
             self.repeat_last_n.set(config.get('repeat_last_n', ''))
             self.frequency_penalty.set(config.get('frequency_penalty', ''))
             self.presence_penalty.set(config.get('presence_penalty', ''))
