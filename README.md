@@ -7,6 +7,7 @@
 ---
 
 ## 界面一览
+<img width="1654" height="1388" alt="image" src="https://github.com/user-attachments/assets/b87fc72b-bfb2-4fe5-b1e4-b77119b19f50" />
 
 | 标签页 | 功能 |
 |--------|------|
@@ -20,6 +21,8 @@
 | 📊 **服务器输出** | 实时日志 | 运行状态 |
 
 ---
+<img width="1659" height="1390" alt="image" src="https://github.com/user-attachments/assets/92b41e97-3b40-4ed4-9372-0749d5865637" />
+
 
 ## 功能特性
 
