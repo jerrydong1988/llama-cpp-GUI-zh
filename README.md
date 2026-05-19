@@ -6,10 +6,6 @@
 
 一个功能完整的图形界面程序，用于管理 `llama-server` 全生命周期：**下载模型 → 选择引擎 → 配置参数 → 启动监控**。告别复杂的命令行参数。
 
----
-
-## 界面一览
-<img width="1654" height="1388" alt="image" src="https://github.com/user-attachments/assets/b87fc72b-bfb2-4fe5-b1e4-b77119b19f50" />
 
 | 标签页 | 功能 |
 |--------|------|
@@ -21,6 +17,23 @@
 | 🔬 **高级** | Flash Attention、推测解码（MTP/draft）、缓存类型、服务器可靠性 |
 | 🌐 **服务器与API** | 网络配置、API 密钥、自定义参数 |
 | 📊 **服务器输出** | 实时日志 | 运行状态 |
+
+---
+
+## 界面一览
+<img width="1654" height="1388" alt="image" src="https://github.com/user-attachments/assets/b87fc72b-bfb2-4fe5-b1e4-b77119b19f50" />
+<img width="1679" height="1390" alt="image" src="https://github.com/user-attachments/assets/a0aca3ce-51dd-4055-800a-e99ea5ad5c75" />
+<img width="1679" height="1390" alt="image" src="https://github.com/user-attachments/assets/8ed40804-4eac-47ff-bb38-240c52a96a2f" />
+<img width="1679" height="1390" alt="image" src="https://github.com/user-attachments/assets/6fd930ec-66f4-4f8f-87b2-c9e67b2ceeb5" />
+<img width="1679" height="1390" alt="image" src="https://github.com/user-attachments/assets/feebd556-7512-402e-aa11-fc47218e8b6f" />
+<img width="1679" height="1390" alt="image" src="https://github.com/user-attachments/assets/d1043a8e-0952-4547-91b7-58e8e08164bc" />
+<img width="1679" height="1390" alt="image" src="https://github.com/user-attachments/assets/7ba38a20-6a03-43b6-9d62-bbc9f18e4830" />
+<img width="1679" height="1390" alt="image" src="https://github.com/user-attachments/assets/9b0f38c5-8a9a-415e-863b-2e7b17dc8aaf" />
+<img width="1679" height="1390" alt="image" src="https://github.com/user-attachments/assets/730b3b1e-edc9-436a-87bf-1095d68d2b8e" />
+<img width="1679" height="1390" alt="image" src="https://github.com/user-attachments/assets/70f4d199-bfeb-46fe-b255-0044f401dd71" />
+
+
+
 
 ---
 
