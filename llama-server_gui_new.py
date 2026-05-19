@@ -1764,6 +1764,12 @@ class LlamaServerGUI:
         path = self.model_path.get().strip()
         if not path or not os.path.isfile(path):
             return
+        
+        # Auto-fill alias from parent directory name
+        parent_dir = os.path.basename(os.path.dirname(path))
+        if parent_dir and not self.alias.get().strip():
+            self.alias.set(parent_dir)
+        
         meta = self._read_gguf_metadata(path)
         if not meta:
             return
