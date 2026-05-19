@@ -46,6 +46,10 @@ class LlamaServerGUI:
         
         # Data store for custom arguments
         self.custom_arguments = []
+        
+        # Engine management
+        self.engine_dirs = []  # list of {"name": str, "dir": str, "exe": str, "source": str}
+        self.selected_engine_dir = ""  # dir of currently selected engine
 
         self.setup_ui()
         self.load_config()
@@ -92,6 +96,7 @@ class LlamaServerGUI:
         # --- Create Tab Frames ---
         model_frame = ttk.Frame(notebook, padding="10")
         repo_frame = ttk.Frame(notebook, padding="10")
+        engine_frame = ttk.Frame(notebook, padding="10")
         generation_frame = ttk.Frame(notebook, padding="10")
         performance_core_frame = ttk.Frame(notebook, padding="10")
         performance_advanced_frame = ttk.Frame(notebook, padding="10")
@@ -100,6 +105,7 @@ class LlamaServerGUI:
 
         notebook.add(model_frame, text="  模型  ")
         notebook.add(repo_frame, text="  模型仓库  ")
+        notebook.add(engine_frame, text="  引擎  ")
         notebook.add(generation_frame, text="  生成参数  ")
         notebook.add(performance_core_frame, text="  性能  ")
         notebook.add(performance_advanced_frame, text="  高级  ")
@@ -109,6 +115,7 @@ class LlamaServerGUI:
         # --- Populate Tabs ---
         self.setup_model_tab(model_frame)
         self.setup_model_repo_tab(repo_frame)
+        self.setup_engine_tab(engine_frame)
         self.setup_generation_tab(generation_frame)
         self.setup_performance_core_tab(performance_core_frame)
         self.setup_performance_advanced_tab(performance_advanced_frame)
@@ -685,6 +692,342 @@ class LlamaServerGUI:
         except Exception as e:
             Messagebox.show_error(f"打开目录失败：{e}", "错误", parent=self.root)
 
+    # --- 引擎管理 (Engine Management) Tab ---
+    def setup_engine_tab(self, parent):
+        """Engine management tab - manage llama-server engine versions."""
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
+        
+        # Main split: engine list (left) | detail (right)
+        main_frame = ttk.Frame(parent)
+        main_frame.grid(row=0, column=0, sticky=tk.NSEW)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.columnconfigure(1, weight=0)
+        main_frame.rowconfigure(0, weight=1)
+        
+        # === Left: Engine List ===
+        list_container = ttk.Frame(main_frame)
+        list_container.grid(row=0, column=0, sticky=tk.NSEW, padx=(0, 5))
+        list_container.rowconfigure(1, weight=1)
+        list_container.columnconfigure(0, weight=1)
+        
+        # Toolbar
+        toolbar = ttk.Frame(list_container)
+        toolbar.grid(row=0, column=0, sticky=tk.EW, pady=(0, 5))
+        self.engine_refresh_btn = ttk.Button(toolbar, text="🔄 刷新", 
+            command=self.scan_engines, bootstyle="primary-outline")
+        self.engine_refresh_btn.pack(side=tk.LEFT, padx=(0, 5))
+        self.engine_add_btn = ttk.Button(toolbar, text="➕ 添加引擎目录", 
+            command=self.engine_add_directory, bootstyle="info")
+        self.engine_add_btn.pack(side=tk.LEFT)
+        ToolTip(self.engine_add_btn, "选择一个包含 llama-server.exe 的目录。")
+        
+        # Engine list (using Treeview for single-column list with icons)
+        list_frame = ttk.Frame(list_container)
+        list_frame.grid(row=1, column=0, sticky=tk.NSEW)
+        list_frame.rowconfigure(0, weight=1)
+        list_frame.columnconfigure(0, weight=1)
+        
+        self.engine_tree = ttk.Treeview(list_frame, columns=('source', 'dirpath'),
+            show='tree', selectmode='browse', height=8)
+        self.engine_tree.heading('#0', text='已安装引擎')
+        self.engine_tree.column('#0', width=400, minwidth=300)
+        
+        engine_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.engine_tree.yview)
+        self.engine_tree.configure(yscrollcommand=engine_scroll.set)
+        self.engine_tree.grid(row=0, column=0, sticky=tk.NSEW)
+        engine_scroll.grid(row=0, column=1, sticky=tk.NS)
+        self.engine_tree.bind('<<TreeviewSelect>>', self.on_engine_select)
+        
+        # === Right: Detail Panel ===
+        detail_container = ttk.Frame(main_frame, width=280)
+        detail_container.grid(row=0, column=1, sticky=tk.NSEW, padx=(5, 0))
+        detail_container.grid_propagate(False)
+        
+        # Engine detail
+        det_group = ttk.Labelframe(detail_container, text="引擎详情", padding="8")
+        det_group.pack(fill=tk.X, pady=(0, 10))
+        
+        self.engine_info_vars = {}
+        for label, key in [('名称', 'name'), ('版本', 'version'), ('来源', 'source'), ('路径', 'dir')]:
+            row = ttk.Frame(det_group)
+            row.pack(fill=tk.X, pady=2)
+            ttk.Label(row, text=f"{label}：", width=6, anchor=tk.E).pack(side=tk.LEFT)
+            var = tk.StringVar(value='')
+            lbl = ttk.Label(row, textvariable=var, anchor=tk.W, wraplength=200)
+            lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self.engine_info_vars[key] = var
+        
+        # Default indicator
+        self.engine_default_label = ttk.Label(det_group, text="", foreground="green", font=("", 9, "bold"))
+        self.engine_default_label.pack(anchor=tk.W, pady=(5, 0))
+        
+        # Action buttons
+        act_group = ttk.Labelframe(detail_container, text="操作", padding="8")
+        act_group.pack(fill=tk.X)
+        
+        self.engine_set_default_btn = ttk.Button(act_group, text="⭐ 设为默认",
+            command=self.engine_set_default, state=tk.DISABLED, bootstyle="warning")
+        self.engine_set_default_btn.pack(fill=tk.X, pady=2)
+        ToolTip(self.engine_set_default_btn, "使用此引擎启动服务器。")
+        
+        self.engine_delete_btn = ttk.Button(act_group, text="🗑 移出列表",
+            command=self.engine_delete, state=tk.DISABLED, bootstyle="danger-outline")
+        self.engine_delete_btn.pack(fill=tk.X, pady=2)
+        ToolTip(self.engine_delete_btn, "从引擎列表中移除此条目（不删除文件）。")
+        
+        self.engine_open_btn = ttk.Button(act_group, text="📂 打开目录",
+            command=self.engine_open_folder, state=tk.DISABLED, bootstyle="secondary-outline")
+        self.engine_open_btn.pack(fill=tk.X, pady=2)
+        ToolTip(self.engine_open_btn, "在资源管理器中打开引擎目录。")
+        
+        # Status bar
+        self.engine_status_var = tk.StringVar(value="")
+        self.engine_status = ttk.Label(parent, textvariable=self.engine_status_var, foreground="gray")
+        self.engine_status.grid(row=1, column=0, sticky=tk.W, pady=(5, 0))
+        
+        # Store engine tree item data
+        self.engine_tree_items = {}  # iid -> engine_info_dict
+        
+        # Auto-scan on load
+        self.root.after(150, self.scan_engines)
+    
+    def scan_engines(self):
+        """Scan for installed engines and populate the list."""
+        for item in self.engine_tree.get_children():
+            self.engine_tree.delete(item)
+        self.engine_tree_items.clear()
+        self._clear_engine_detail()
+        
+        app_dir = os.path.dirname(self.get_config_path(''))
+        engines = []
+        seen_dirs = set()
+        
+        # 1. Scan 'engines/' directory at app root
+        engines_dir = os.path.join(app_dir, 'engines')
+        if os.path.isdir(engines_dir):
+            for entry in sorted(os.listdir(engines_dir)):
+                eng_dir = os.path.join(engines_dir, entry)
+                exe_path = os.path.join(eng_dir, 'llama-server.exe')
+                if os.path.isdir(eng_dir) and os.path.isfile(exe_path):
+                    eng_info = self._get_engine_info(entry, eng_dir, exe_path, '本地')
+                    engines.append(eng_info)
+                    seen_dirs.add(os.path.normcase(eng_dir))
+        
+        # 2. Scan NovaMax engine directory if it exists
+        novamax_engines = os.path.join('C:\\LingLong\\NovaStudio\\NovaMax', 'external', 'llamacpp')
+        if os.path.isdir(novamax_engines):
+            for entry in sorted(os.listdir(novamax_engines)):
+                eng_dir = os.path.join(novamax_engines, entry)
+                exe_path = os.path.join(eng_dir, 'llama-server.exe')
+                if os.path.isdir(eng_dir) and os.path.isfile(exe_path):
+                    norm = os.path.normcase(eng_dir)
+                    if norm not in seen_dirs:
+                        eng_info = self._get_engine_info(entry, eng_dir, exe_path, 'NovaMax')
+                        engines.append(eng_info)
+                        seen_dirs.add(norm)
+        
+        self.engine_dirs = engines
+        
+        # Populate tree
+        for eng in engines:
+            is_default = (os.path.normcase(eng['dir']) == os.path.normcase(self.selected_engine_dir))
+            marker = "⭐ " if is_default else "  "
+            icon = "🖥" if 'ROCm' in eng.get('version', '') or 'hip' in eng.get('name', '').lower() else "⚡"
+            self.engine_tree.insert('', tk.END, 
+                text=f"{marker}{icon}  {eng['name']}",
+                iid=eng['name'])
+            self.engine_tree_items[eng['name']] = eng
+        
+        # Restore default selection
+        if self.selected_engine_dir:
+            for eng in engines:
+                if os.path.normcase(eng['dir']) == os.path.normcase(self.selected_engine_dir):
+                    self.engine_tree.selection_set(eng['name'])
+                    self.engine_tree.see(eng['name'])
+                    self._show_engine_detail(eng)
+                    break
+        
+        if engines:
+            count_rocm = sum(1 for e in engines if 'ROCm' in e.get('version', '') or 'hip' in e.get('name', '').lower())
+            count_vk = sum(1 for e in engines if 'vulkan' in e.get('name', '').lower())
+            parts = [f"✅ 找到 {len(engines)} 个引擎"]
+            if count_rocm: parts.append(f"{count_rocm} 个 ROCm")
+            if count_vk: parts.append(f"{count_vk} 个 Vulkan")
+            self.engine_status_var.set(" | ".join(parts))
+        else:
+            self.engine_status_var.set("⚠ 未找到引擎，将使用系统 PATH 中的 llama-server")
+    
+    def _get_engine_info(self, name, eng_dir, exe_path, source):
+        """Extract engine info from directory."""
+        # Try to read version from exe or directory name
+        version = name  # fallback: use directory name
+        exe_size = os.path.getsize(exe_path) if os.path.exists(exe_path) else 0
+        
+        # Detect backend type from directory contents
+        has_rocm = any(f.startswith('roc') or f.startswith('hip') or 'amd' in f.lower() 
+            for f in os.listdir(eng_dir) if os.path.isfile(os.path.join(eng_dir, f)))
+        has_vulkan = any('vulkan' in f.lower() or 'vk' in f.lower()
+            for f in os.listdir(eng_dir) if os.path.isfile(os.path.join(eng_dir, f)))
+        
+        if has_rocm:
+            backend = "ROCm"
+        elif has_vulkan:
+            backend = "Vulkan"
+        else:
+            backend = "CPU"
+        
+        return {
+            'name': name,
+            'dir': eng_dir,
+            'exe': exe_path,
+            'exe_size': exe_size,
+            'source': source,
+            'version': f"{name} ({backend})",
+            'backend': backend
+        }
+    
+    def _clear_engine_detail(self):
+        for var in self.engine_info_vars.values():
+            var.set('')
+        self.engine_default_label.config(text="")
+        self.engine_set_default_btn.config(state=tk.DISABLED)
+        self.engine_delete_btn.config(state=tk.DISABLED)
+        self.engine_open_btn.config(state=tk.DISABLED)
+    
+    def _show_engine_detail(self, eng):
+        self.engine_info_vars['name'].set(eng['name'])
+        self.engine_info_vars['version'].set(eng.get('version', eng['name']))
+        self.engine_info_vars['source'].set(eng['source'])
+        self.engine_info_vars['dir'].set(eng['dir'])
+        
+        is_default = (os.path.normcase(eng['dir']) == os.path.normcase(self.selected_engine_dir))
+        self.engine_default_label.config(
+            text="⭐ 当前默认引擎" if is_default else "",
+            foreground="green")
+        
+        self.engine_set_default_btn.config(state=tk.NORMAL if not is_default else tk.DISABLED)
+        self.engine_delete_btn.config(state=tk.NORMAL)
+        self.engine_open_btn.config(state=tk.NORMAL)
+    
+    def on_engine_select(self, event):
+        selection = self.engine_tree.selection()
+        if not selection:
+            self._clear_engine_detail()
+            return
+        iid = selection[0]
+        eng = self.engine_tree_items.get(iid)
+        if eng:
+            self._show_engine_detail(eng)
+    
+    def engine_set_default(self):
+        """Set the selected engine as default."""
+        selection = self.engine_tree.selection()
+        if not selection:
+            return
+        iid = selection[0]
+        eng = self.engine_tree_items.get(iid)
+        if not eng:
+            return
+        
+        self.selected_engine_dir = eng['dir']
+        
+        # Update tree markers
+        for child in self.engine_tree.get_children():
+            e = self.engine_tree_items.get(child)
+            if not e:
+                continue
+            marker = "⭐ " if os.path.normcase(e['dir']) == os.path.normcase(self.selected_engine_dir) else "  "
+            icon = "🖥" if 'ROCm' in e.get('version', '') or 'hip' in e.get('name', '').lower() else "⚡"
+            self.engine_tree.item(child, text=f"{marker}{icon}  {e['name']}")
+        
+        self.engine_status_var.set(f"✅ 默认引擎：{eng['name']}")
+        Messagebox.ok(f"默认引擎已设为：\n{eng['dir']}", "已设置", parent=self.root)
+    
+    def engine_add_directory(self):
+        """Browse and add an engine directory."""
+        app_dir = os.path.dirname(self.get_config_path(''))
+        chosen = filedialog.askdirectory(
+            title="选择包含 llama-server.exe 的目录",
+            initialdir=app_dir
+        )
+        if not chosen:
+            return
+        
+        exe_path = os.path.join(chosen, 'llama-server.exe')
+        if not os.path.isfile(exe_path):
+            Messagebox.show_error("所选目录中没有找到 llama-server.exe！", "错误", parent=self.root)
+            return
+        
+        name = os.path.basename(chosen)
+        norm_chosen = os.path.normcase(chosen)
+        for eng in self.engine_dirs:
+            if os.path.normcase(eng['dir']) == norm_chosen:
+                Messagebox.show_warning("该引擎已在列表中。", "重复", parent=self.root)
+                return
+        
+        eng = self._get_engine_info(name, chosen, exe_path, '自定义')
+        self.engine_dirs.append(eng)
+        self.engine_tree_items[eng['name']] = eng
+        
+        marker = "⭐ " if os.path.normcase(chosen) == os.path.normcase(self.selected_engine_dir) else "  "
+        icon = "🖥" if 'ROCm' in eng.get('version', '') else "⚡"
+        self.engine_tree.insert('', tk.END, text=f"{marker}{icon}  {eng['name']}", iid=eng['name'])
+        
+        self.engine_status_var.set(f"✅ 已添加：{name}")
+    
+    def engine_delete(self):
+        """Remove engine from list (doesn't delete files)."""
+        selection = self.engine_tree.selection()
+        if not selection:
+            return
+        iid = selection[0]
+        eng = self.engine_tree_items.get(iid)
+        if not eng:
+            return
+        
+        reply = Messagebox.yesno(
+            f"确定将「{eng['name']}」移出列表？\n文件不会被删除。",
+            "确认移除",
+            parent=self.root
+        )
+        if not reply:
+            return
+        
+        # Remove from data structures
+        self.engine_dirs = [e for e in self.engine_dirs if e['name'] != eng['name']]
+        if iid in self.engine_tree_items:
+            del self.engine_tree_items[iid]
+        self.engine_tree.delete(iid)
+        
+        # If it was the default, clear default
+        if os.path.normcase(eng['dir']) == os.path.normcase(self.selected_engine_dir):
+            self.selected_engine_dir = ""
+            self.engine_status_var.set("⚠ 默认引擎已被移除，将使用系统 PATH 中的 llama-server")
+        
+        self._clear_engine_detail()
+    
+    def engine_open_folder(self):
+        selection = self.engine_tree.selection()
+        if not selection:
+            return
+        iid = selection[0]
+        eng = self.engine_tree_items.get(iid)
+        if eng and os.path.isdir(eng['dir']):
+            try:
+                os.startfile(eng['dir'])
+            except Exception as e:
+                Messagebox.show_error(f"打开目录失败：{e}", "错误", parent=self.root)
+    
+    def engine_get_path(self):
+        """Get the full path to llama-server.exe for the selected engine.
+        Returns None if using system PATH."""
+        if self.selected_engine_dir:
+            exe_path = os.path.join(self.selected_engine_dir, 'llama-server.exe')
+            if os.path.isfile(exe_path):
+                return exe_path
+        return None
+
     # --- ModelScope Download Methods ---
     def _ms_get_repo_dir(self):
         """Parse repo ID and return the save directory path.
@@ -1211,7 +1554,12 @@ class LlamaServerGUI:
             Messagebox.show_error("请选择模型路径！", "错误")
             return None
         
-        cmd = ["llama-server", "-m", self.model_path.get().strip()]
+        # Use selected engine or fallback to PATH
+        engine_path = self.engine_get_path()
+        if engine_path:
+            cmd = [engine_path, "-m", self.model_path.get().strip()]
+        else:
+            cmd = ["llama-server", "-m", self.model_path.get().strip()]
         if not self.ctx_size_auto.get():
             cmd.extend(['-c', str(self.ctx_size.get())])
         cmd.extend(['-ngl', str(self.gpu_layers.get())])
@@ -1398,6 +1746,7 @@ class LlamaServerGUI:
             'seed': self.seed.get(), 'min_p': self.min_p.get(),
             'ctx_size_auto': self.ctx_size_auto.get(),
             'reasoning': self.reasoning.get(),
+            'engine_dir': self.selected_engine_dir,
             'cache_type_k': self.cache_type_k.get(), 'cache_type_v': self.cache_type_v.get()
         }
         try:
@@ -1538,6 +1887,11 @@ class LlamaServerGUI:
                 self.cache_type_v.set(config.get('cache_type_v', ''))
             except Exception:
                 self.cache_type_v.set('')
+            
+            # Restore engine selection
+            eng_dir = config.get('engine_dir', '')
+            if eng_dir and os.path.isdir(eng_dir) and os.path.isfile(os.path.join(eng_dir, 'llama-server.exe')):
+                self.selected_engine_dir = eng_dir
             
             # Update pointer to currently-loaded config
             self.config_file = load_path
