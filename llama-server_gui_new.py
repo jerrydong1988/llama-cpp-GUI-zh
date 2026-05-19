@@ -419,7 +419,7 @@ class LlamaServerGUI:
 
     # --- 模型仓库 (Model Repository) Tab ---
     def setup_model_repo_tab(self, parent):
-        """Model repository tab - browse and manage downloaded models."""
+        """Model repository tab - browse and manage downloaded models from multiple sources."""
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
         
@@ -433,14 +433,24 @@ class LlamaServerGUI:
         # === Left: TreeView ===
         tree_container = ttk.Frame(main_frame)
         tree_container.grid(row=0, column=0, sticky=tk.NSEW, padx=(0, 5))
-        tree_container.rowconfigure(0, weight=0)
         tree_container.rowconfigure(1, weight=1)
         tree_container.columnconfigure(0, weight=1)
         
-        # Refresh button
-        self.repo_refresh_btn = ttk.Button(tree_container, text="🔄 刷新", 
+        # Toolbar: refresh + add directory
+        toolbar = ttk.Frame(tree_container)
+        toolbar.grid(row=0, column=0, sticky=tk.EW, pady=(0, 5))
+        
+        self.repo_refresh_btn = ttk.Button(toolbar, text="🔄 刷新", 
             command=self.scan_downloaded_models, bootstyle="primary-outline")
-        self.repo_refresh_btn.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+        self.repo_refresh_btn.pack(side=tk.LEFT, padx=(0, 5))
+        
+        self.repo_add_dir_btn = ttk.Button(toolbar, text="➕ 添加目录", 
+            command=self.repo_add_root, bootstyle="info")
+        self.repo_add_dir_btn.pack(side=tk.LEFT, padx=(0, 5))
+        ToolTip(self.repo_add_dir_btn, "添加包含 GGUF 模型文件的目录。支持 LM Studio、NovaMax 等任意目录。")
+        
+        self.repo_root_label = ttk.Label(toolbar, text="", foreground="gray", font=("", 8))
+        self.repo_root_label.pack(side=tk.LEFT, padx=(5, 0))
         
         # Treeview frame
         tree_frame = ttk.Frame(tree_container)
@@ -459,6 +469,7 @@ class LlamaServerGUI:
         self.repo_tree.grid(row=0, column=0, sticky=tk.NSEW)
         tree_scroll.grid(row=0, column=1, sticky=tk.NS)
         self.repo_tree.bind('<<TreeviewSelect>>', self.on_repo_tree_select)
+        self.repo_tree.bind('<Button-3>', self._repo_show_context_menu)  # right-click
         
         # === Right: Detail Panel ===
         detail_container = ttk.Frame(main_frame, width=280)
@@ -474,6 +485,7 @@ class LlamaServerGUI:
             ('文件名', 'name', ''),
             ('大小', 'size', ''),
             ('类型', 'type', ''),
+            ('来源', 'source', ''),
             ('路径', 'path', ''),
         ]
         for label, key, default in info_fields:
@@ -509,89 +521,123 @@ class LlamaServerGUI:
         self.repo_open_btn.pack(fill=tk.X, pady=2)
         ToolTip(self.repo_open_btn, "在资源管理器中打开文件所在目录。")
         
+        # Context menu for right-click
+        self.repo_context_menu = tk.Menu(self.root, tearoff=0)
+        self.repo_context_menu.add_command(label="移除此目录", command=self._repo_remove_selected_root)
+        
         # Store file info per tree item
         self.repo_tree_items = {}  # iid -> {name, path, type, size}
+        self.repo_root_items = {}  # root_iid -> {path, label, builtin}
         self._repo_selected_path = None  # full path of currently selected file
+        
+        # Initialize roots
+        app_dir = os.path.dirname(self.get_config_path(''))
+        default_path = os.path.join(app_dir, 'models')
+        self.model_repo_roots = [
+            {'path': default_path, 'label': '默认仓库', 'builtin': True}
+        ]
         
         # Auto-scan on first load
         self.root.after(100, self.scan_downloaded_models)
     
     def scan_downloaded_models(self):
-        """Scan the models/ directory and populate the tree."""
-        # Clear tree
+        """Scan all root directories and populate the tree."""
         for item in self.repo_tree.get_children():
             self.repo_tree.delete(item)
         self.repo_tree_items.clear()
+        self.repo_root_items.clear()
         self._clear_repo_detail()
         
-        app_dir = os.path.dirname(self.get_config_path(''))
-        models_dir = os.path.join(app_dir, 'models')
-        
-        if not os.path.isdir(models_dir):
-            self.repo_tree.insert('', tk.END, text='⚠ 尚未下载任何模型', iid='_empty')
-            return
-        
-        # Scan repos
-        repo_dirs = sorted([d for d in os.listdir(models_dir) 
-            if os.path.isdir(os.path.join(models_dir, d))])
-        
-        found_any = False
-        for repo_name in repo_dirs:
-            repo_path = os.path.join(models_dir, repo_name)
+        total_files = 0
+        for root_info in self.model_repo_roots:
+            root_path = root_info['path']
+            if not os.path.isdir(root_path):
+                continue
             
-            # Check if this repo has subdirectories (namespace/repo pattern)
-            sub_items = os.listdir(repo_path)
-            if any(os.path.isdir(os.path.join(repo_path, s)) for s in sub_items):
-                # Deep structure: namespace/repo_name/file
-                for sub_name in sorted(sub_items):
-                    sub_path = os.path.join(repo_path, sub_name)
-                    if os.path.isdir(sub_path):
-                        self._add_repo_to_tree(repo_name + '/' + sub_name, sub_path)
+            root_label = root_info['label']
+            builtin = root_info.get('builtin', False)
+            marker = "★ " if builtin else "  "
+            root_iid = f"root_{id(root_info)}"
+            self.repo_tree.insert('', tk.END, text=f"{marker}{root_label}  ({root_path})",
+                iid=root_iid, open=True)
+            self.repo_root_items[root_iid] = {'path': root_path, 'label': root_label, 'builtin': builtin}
+            
+            files = self._scan_directory_for_gguf(root_path)
+            if files:
+                # Group by subdirectory relative to root
+                groups = {}
+                for fpath, fname in files:
+                    rel_dir = os.path.relpath(os.path.dirname(fpath), root_path)
+                    if rel_dir == '.':
+                        group = ''
+                    else:
+                        group = rel_dir
+                    if group not in groups:
+                        groups[group] = []
+                    groups[group].append((fpath, fname))
+                
+                for group_name in sorted(groups.keys()):
+                    if group_name:
+                        repo_iid = f"repo_{root_iid}_{group_name}"
+                        self.repo_tree.insert(root_iid, tk.END, 
+                            text=f"📁 {group_name}", iid=repo_iid, open=False)
+                        parent_iid = repo_iid
+                    else:
+                        parent_iid = root_iid
+                    
+                    for fpath, fname in sorted(groups[group_name], key=lambda x: x[1]):
+                        self._add_file_to_tree(parent_iid, fpath, fname, root_label)
+                        total_files += 1
             else:
-                # Flat structure: repo_name/file
-                self._add_repo_to_tree(repo_name, repo_path)
+                # Empty root
+                empty_iid = f"empty_{root_iid}"
+                self.repo_tree.insert(root_iid, tk.END, text="(空)", iid=empty_iid)
         
-        if not found_any and not self.repo_tree.get_children():
-            self.repo_tree.insert('', tk.END, text='📭 仓库为空', iid='_empty')
+        # Update label
+        n_roots = len([r for r in self.model_repo_roots if os.path.isdir(r['path'])])
+        suffix = f" | 共 {total_files} 个文件" if total_files else ""
+        self.repo_root_label.config(text=f"{n_roots} 个目录{suffix}")
+        
+        if not total_files:
+            self.repo_tree.insert('', tk.END, text='📭 未找到模型文件。点击「添加目录」导入已有模型。', iid='_empty')
     
-    def _add_repo_to_tree(self, display_name, repo_path):
-        """Add a repo and its files to the tree."""
-        repo_iid = f"repo_{display_name}"
-        self.repo_tree.insert('', tk.END, text=f"📁 {display_name}", 
-            iid=repo_iid, open=False)
+    def _scan_directory_for_gguf(self, directory):
+        """Recursively scan a directory for .gguf files. Returns list of (full_path, filename)."""
+        results = []
+        try:
+            for entry in os.listdir(directory):
+                entry_path = os.path.join(directory, entry)
+                if os.path.isfile(entry_path) and (entry.endswith('.gguf') or entry.endswith('.gguf_file')):
+                    results.append((entry_path, entry))
+                elif os.path.isdir(entry_path):
+                    # Don't recurse into directories that look like they might not contain models
+                    results.extend(self._scan_directory_for_gguf(entry_path))
+        except (PermissionError, OSError):
+            pass
+        return results
+    
+    def _add_file_to_tree(self, parent_iid, fpath, fname, source_label):
+        """Add a single model file to the tree under the given parent."""
+        size = os.path.getsize(fpath)
+        size_str = self._format_size(size)
         
-        files_added = 0
-        for fname in sorted(os.listdir(repo_path)):
-            fpath = os.path.join(repo_path, fname)
-            if not os.path.isfile(fpath):
-                continue
-            if not (fname.endswith('.gguf') or fname.endswith('.gguf_file') or fname.endswith('.txt')):
-                continue
-            
-            size = os.path.getsize(fpath)
-            size_str = self._format_size(size)
-            
-            is_mmproj = fname.startswith('mmproj')
-            is_imatrix = 'imatrix' in fname.lower()
-            icon = "📷" if is_mmproj else ("📊" if is_imatrix else "📄")
-            ftype = "mmproj" if is_mmproj else ("imatrix" if is_imatrix else "model")
-            
-            file_iid = f"file_{display_name}_{fname}"
-            self.repo_tree.insert(repo_iid, tk.END, 
-                text=f"{icon}  {size_str:>9s}  {fname}",
-                iid=file_iid)
-            self.repo_tree_items[file_iid] = {
-                'name': fname,
-                'path': fpath,
-                'size': size,
-                'type': ftype
-            }
-            files_added += 1
+        is_mmproj = fname.startswith('mmproj')
+        is_imatrix = 'imatrix' in fname.lower()
+        icon = "📷" if is_mmproj else ("📊" if is_imatrix else "📄")
+        ftype = "mmproj" if is_mmproj else ("imatrix" if is_imatrix else "model")
         
-        if files_added == 0:
-            self.repo_tree.delete(repo_iid)
-        
-        return files_added > 0
+        safe_name = fname.replace('.', '_').replace(' ', '_')
+        file_iid = f"file_{parent_iid}_{safe_name}"
+        self.repo_tree.insert(parent_iid, tk.END, 
+            text=f"{icon}  {size_str:>9s}  {fname}",
+            iid=file_iid)
+        self.repo_tree_items[file_iid] = {
+            'name': fname,
+            'path': fpath,
+            'size': size,
+            'type': ftype,
+            'source': source_label
+        }
     
     def on_repo_tree_select(self, event):
         """Handle tree selection change."""
@@ -604,15 +650,14 @@ class LlamaServerGUI:
         item_info = self.repo_tree_items.get(iid)
         
         if not item_info:
-            # It's a folder/repo, not a file
             self._clear_repo_detail()
             return
         
         self._repo_selected_path = item_info['path']
         
-        # Update detail panel
         self.repo_info_vars['name'].set(item_info['name'])
         self.repo_info_vars['size'].set(self._format_size(item_info['size']))
+        self.repo_info_vars['source'].set(item_info.get('source', ''))
         
         ftype = item_info['type']
         if ftype == 'mmproj':
@@ -624,14 +669,12 @@ class LlamaServerGUI:
         self.repo_info_vars['type'].set(type_display)
         self.repo_info_vars['path'].set(item_info['path'])
         
-        # Enable/disable buttons based on type
         self.repo_load_btn.config(state=tk.NORMAL if ftype == 'model' else tk.DISABLED)
         self.repo_load_mmproj_btn.config(state=tk.NORMAL if ftype == 'mmproj' else tk.DISABLED)
         self.repo_delete_btn.config(state=tk.NORMAL)
         self.repo_open_btn.config(state=tk.NORMAL)
     
     def _clear_repo_detail(self):
-        """Clear the detail panel."""
         self._repo_selected_path = None
         for key, var in self.repo_info_vars.items():
             var.set('')
@@ -639,6 +682,64 @@ class LlamaServerGUI:
         self.repo_load_mmproj_btn.config(state=tk.DISABLED)
         self.repo_delete_btn.config(state=tk.DISABLED)
         self.repo_open_btn.config(state=tk.DISABLED)
+    
+    def repo_add_root(self):
+        """Add a custom directory to scan for models."""
+        app_dir = os.path.dirname(self.get_config_path(''))
+        chosen = filedialog.askdirectory(
+            title="选择包含 GGUF 模型文件的目录",
+            initialdir=app_dir
+        )
+        if not chosen:
+            return
+        
+        # Check for duplicate
+        norm_chosen = os.path.normcase(chosen)
+        for r in self.model_repo_roots:
+            if os.path.normcase(r['path']) == norm_chosen:
+                Messagebox.show_warning("该目录已在列表中。", "重复", parent=self.root)
+                return
+        
+        # Auto-generate a label
+        dir_name = os.path.basename(chosen)
+        label = dir_name
+        
+        self.model_repo_roots.append({'path': chosen, 'label': label, 'builtin': False})
+        self.scan_downloaded_models()
+        self.repo_root_label.config(text=f"{len(self.model_repo_roots)} 个目录")
+        
+        Messagebox.ok(f"已添加目录：{chosen}\n\n点击「刷新」可重新扫描。", "添加成功", parent=self.root)
+    
+    def _repo_show_context_menu(self, event):
+        """Show right-click context menu."""
+        iid = self.repo_tree.identify_row(event.y)
+        if iid and iid in self.repo_root_items:
+            root_info = self.repo_root_items[iid]
+            if not root_info.get('builtin', False):
+                self._repo_context_iid = iid
+                self.repo_context_menu.post(event.x_root, event.y_root)
+    
+    def _repo_remove_selected_root(self):
+        """Remove a custom root directory from the scan list."""
+        iid = getattr(self, '_repo_context_iid', None)
+        if not iid or iid not in self.repo_root_items:
+            return
+        root_info = self.repo_root_items[iid]
+        
+        reply = Messagebox.yesno(
+            f"确定将「{root_info['label']}」移出扫描列表？\n文件不会被删除。",
+            "确认移除",
+            parent=self.root
+        )
+        if not reply:
+            return
+        
+        # Remove from roots
+        self.model_repo_roots = [
+            r for r in self.model_repo_roots 
+            if os.path.normcase(r['path']) != os.path.normcase(root_info['path'])
+        ]
+        self.scan_downloaded_models()
     
     def repo_load_model(self):
         """Load the selected model into the main config."""
@@ -1747,6 +1848,7 @@ class LlamaServerGUI:
             'ctx_size_auto': self.ctx_size_auto.get(),
             'reasoning': self.reasoning.get(),
             'engine_dir': self.selected_engine_dir,
+            'model_repo_roots': [r for r in self.model_repo_roots if not r.get('builtin')],
             'cache_type_k': self.cache_type_k.get(), 'cache_type_v': self.cache_type_v.get()
         }
         try:
@@ -1892,6 +1994,16 @@ class LlamaServerGUI:
             eng_dir = config.get('engine_dir', '')
             if eng_dir and os.path.isdir(eng_dir) and os.path.isfile(os.path.join(eng_dir, 'llama-server.exe')):
                 self.selected_engine_dir = eng_dir
+            
+            # Restore custom model repo roots
+            saved_roots = config.get('model_repo_roots', [])
+            if saved_roots and hasattr(self, 'model_repo_roots'):
+                for r in saved_roots:
+                    if os.path.isdir(r.get('path', '')):
+                        r['builtin'] = False
+                        self.model_repo_roots.append(r)
+                        if 'label' not in r:
+                            r['label'] = os.path.basename(r['path'])
             
             # Update pointer to currently-loaded config
             self.config_file = load_path
