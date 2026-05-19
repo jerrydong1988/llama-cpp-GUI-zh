@@ -901,7 +901,7 @@ class LlamaServerGUI:
         else:
             self.mmproj_path.set("")
         # Also fill alias immediately (context slider debounce may be delayed)
-        self._auto_fill_alias()
+        self._auto_fill_alias(force=True)
     
     def repo_load_mmproj(self):
         """Load the selected mmproj into the config."""
@@ -1765,13 +1765,15 @@ class LlamaServerGUI:
             Messagebox.ok(f"草稿模型已下载至：\n{result}\n\n已自动填入「草稿模型路径 (-md)」。\n\n前往「高级 → 推测解码」设置推测解码类型。", "下载完成", parent=self.root)
         self.root.after(100, show_msg)
 
-    def _auto_fill_alias(self):
-        """Auto-fill alias from the parent directory name of the current model path."""
+    def _auto_fill_alias(self, force=False):
+        """Auto-fill alias from the parent directory name of the current model path.
+        force=True: always overwrite (used when loading from repo).
+        force=False: only fill if alias is empty (used on startup path changes)."""
         path = self.model_path.get().strip()
         if not path:
             return
         parent_dir = os.path.basename(os.path.dirname(path))
-        if parent_dir and not self.alias.get().strip():
+        if parent_dir and (force or not self.alias.get().strip()):
             self.alias.set(parent_dir)
 
     def _auto_adjust_ctx_slider(self):
