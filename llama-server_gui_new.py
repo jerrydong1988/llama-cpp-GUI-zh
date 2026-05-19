@@ -2319,6 +2319,8 @@ class LlamaServerGUI:
         
         import time
         self._startup_start_time = time.perf_counter()
+        if hasattr(self, '_startup_sec'):
+            del self._startup_sec  # reset for new run
         
         # Capture connection info at launch time (thread-safe)
         health_host = self.host.get().strip()
@@ -2457,13 +2459,18 @@ class LlamaServerGUI:
     
     def _set_server_healthy(self, response_ms):
         import time
-        startup_sec = int(time.perf_counter() - self._startup_start_time) if hasattr(self, '_startup_start_time') else None
-        if startup_sec is not None and startup_sec > 0:
-            self.server_status_var.set(f"✓ 运行中 ({response_ms}ms) · 启动耗时 {startup_sec}s")
-            self.update_output(f"✓ 服务器就绪！启动耗时 {startup_sec}s\n", tag="speed")
-        else:
-            self.server_status_var.set(f"✓ 运行中 ({response_ms}ms)")
         self.server_status_label.config(foreground="green")
+        # Only record startup time on the very first health check success
+        if not hasattr(self, '_startup_sec'):
+            if hasattr(self, '_startup_start_time'):
+                self._startup_sec = int(time.perf_counter() - self._startup_start_time)
+            else:
+                self._startup_sec = None
+            if self._startup_sec is not None:
+                self.update_output(f"✓ 服务器就绪！启动耗时 {self._startup_sec}s\n", tag="speed")
+                self.server_status_var.set(f"✓ 运行中 ({response_ms}ms) · 启动耗时 {self._startup_sec}s")
+                return
+        self.server_status_var.set(f"✓ 运行中 ({response_ms}ms)")
     
     def _set_server_unhealthy(self):
         self.server_status_var.set("⚠ 连接中断")
