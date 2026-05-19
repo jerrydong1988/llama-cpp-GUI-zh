@@ -14,6 +14,7 @@ import json
 import webbrowser
 import urllib.request
 import urllib.error
+import time
 
 try:
     import pystray
@@ -22,6 +23,9 @@ try:
     TRAY_AVAILABLE = True
 except ImportError:
     TRAY_AVAILABLE = False
+
+# Application version
+__version__ = "1.3.2"
 
 class LlamaServerGUI:
     def __init__(self, root):
@@ -40,6 +44,9 @@ class LlamaServerGUI:
 
         # Use user's directory for portable config file
         self.config_file = self.get_config_path("llama_server_config.json")
+        
+        # ModelScope download root (empty = default: {app_dir}/models/)
+        self.ms_download_root = ""
         
         # Theme state
         self.current_theme = "darkly"
@@ -171,6 +178,10 @@ class LlamaServerGUI:
         ("dry_sequence_breaker","dry_sequence_breaker","--dry-sequence-breaker","str",""),
     ]
 
+    # Parameters not auto-generated in generate_command (handled individually)
+    _SPECIAL_PARAMS = {"model_path", "ctx_size", "gpu_layers", "flash_attn",
+                       "reasoning_effort", "cache_prompt", "numa"}
+
     def _get_var(self, attr_name):
         return getattr(self, attr_name, None)
 
@@ -212,7 +223,7 @@ class LlamaServerGUI:
         header = ttk.Frame(self.root, padding="10 8")
         header.pack(fill=tk.X)
         ttk.Label(header, text="🔧 LLaMA 服务器管理器", font=("", 14, "bold")).pack(side=tk.LEFT)
-        ttk.Label(header, text="v1.3.1", foreground="gray", font=("", 9)).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(header, text=f"v{__version__}", foreground="gray", font=("", 9)).pack(side=tk.LEFT, padx=(8, 0))
         
         # Theme toggle button (right side)
         theme_frame = ttk.Frame(header)
@@ -261,15 +272,16 @@ class LlamaServerGUI:
         
         # Create all content panels (initially hidden)
         self._panels = {}
-        for iid, text, parent, method, pack_dir in sections:
+        for iid, text, parent, method, _ in sections:
             panel = ttk.Frame(self.content_frame, padding="10")
             self._panels[iid] = panel
             # Populate via the original setup method
             getattr(self, method)(panel)
         
         # Show first panel by default
-        self.nav_tree.selection_set("models")
-        self._show_panel("models")
+        first_iid = sections[0][0]
+        self.nav_tree.selection_set(first_iid)
+        self._show_panel(first_iid)
         
         # ── Bottom: Fixed control bar ──
         bottom_bar = ttk.Frame(self.root, padding="10 10")
@@ -302,6 +314,8 @@ class LlamaServerGUI:
             "使用当前设置启动服务器。", bootstyle="success")
         
         self.root.bind('<Control-s>', lambda e: self.save_named_config())
+        # Sync download dir display after UI is set up
+        self.root.after(50, self._sync_dl_dir_display)
         self.root.bind('<Control-Shift-S>', lambda e: self.start_server() if not self.is_running else None)
     
     def _on_nav_select(self, event):
@@ -571,7 +585,6 @@ class LlamaServerGUI:
         self.create_combobox(spec_group, "推测解码类型 (--spec-type):", self.spec_type, "推测解码类型。无草稿模型时（模型自带MTP头）可选：mtp / ngram-cache / ngram-mod 等；有草稿模型时（-md 指定）可选：draft-simple / draft-eagle3 / draft-mtp。可组合多个，用逗号分隔。", spec_types, row=4)
         # (草稿模型下载已整合到「模型」标签页的 ModelScope 区域)
         # --- Server Reliability ---
-        # --- Server Reliability ---
         server_rel_group = ttk.Labelframe(parent, text="服务器可靠性", padding="10")
         server_rel_group.pack(fill=tk.X, pady=5)
         self.timeout = tk.StringVar(value="")
@@ -685,9 +698,21 @@ class LlamaServerGUI:
         dl_frame.grid(row=0, column=0, sticky=tk.NSEW)
         dl_frame.columnconfigure(1, weight=1)
         
+        # --- Download directory picker ---
+        dl_dir_frame = ttk.Frame(dl_frame)
+        dl_dir_frame.grid(row=0, column=0, columnspan=2, sticky=tk.EW, pady=(0, 2))
+        dl_dir_frame.columnconfigure(1, weight=1)
+        ttk.Label(dl_dir_frame, text="下载目录:", font=("", 8)).grid(row=0, column=0, padx=(0, 5))
+        self._dl_dir_display = ttk.Label(dl_dir_frame, text="", foreground="gray", font=("", 8), anchor=tk.W)
+        self._dl_dir_display.grid(row=0, column=1, sticky=tk.EW)
+        ToolTip(self._dl_dir_display, "模型下载后保存的目录。点击右侧按钮更改。")
+        dl_dir_btn = ttk.Button(dl_dir_frame, text="📂 更改", command=self._change_ms_download_root,
+            bootstyle="secondary-link", takefocus=False)
+        dl_dir_btn.grid(row=0, column=2, padx=(5, 0))
+        
         # --- Main Model Download ---
         ms_group = ttk.Labelframe(dl_frame, text="ModelScope 模型下载", padding="8")
-        ms_group.grid(row=0, column=0, columnspan=2, sticky=tk.EW, pady=(0, 5))
+        ms_group.grid(row=1, column=0, columnspan=2, sticky=tk.EW, pady=(0, 5))
         ms_group.columnconfigure(1, weight=1)
         
         self.ms_repo = tk.StringVar()
@@ -745,7 +770,7 @@ class LlamaServerGUI:
         
         # --- Draft Model Download ---
         dg = ttk.Labelframe(dl_frame, text="草稿模型下载（推测解码用）", padding="6")
-        dg.grid(row=1, column=0, columnspan=2, sticky=tk.EW)
+        dg.grid(row=2, column=0, columnspan=2, sticky=tk.EW)
         dg.columnconfigure(1, weight=1)
         
         self.draft_ms_repo = tk.StringVar()
@@ -1500,15 +1525,59 @@ class LlamaServerGUI:
         return None
 
     # --- ModelScope Download Methods ---
-    def _ms_get_repo_dir(self):
-        """Parse repo ID and return the save directory path.
-        E.g. 'unsloth/Qwen3.6-35B-A3B-GGUF' → 'models/unsloth/Qwen3.6-35B-A3B-GGUF/'
-        """
-        repo = self.ms_repo.get().strip()
+    def _change_ms_download_root(self):
+        """Let user choose a custom download root directory."""
         app_dir = os.path.dirname(self.get_config_path(''))
+        default_dir = os.path.join(app_dir, 'models')
+        initial = self.ms_download_root if self.ms_download_root else default_dir
+        chosen = filedialog.askdirectory(
+            title="选择模型下载根目录（选中的仓库会下载到其子目录）",
+            initialdir=initial if os.path.isdir(initial) else app_dir
+        )
+        if not chosen:
+            return
+        self.ms_download_root = chosen
+        self._sync_dl_dir_display()
+        # Auto-register as a repo root, but skip if already covered by an existing root
+        if hasattr(self, 'model_repo_roots') and self.model_repo_roots:
+            norm_chosen = os.path.normcase(chosen) + os.sep
+            is_covered = False
+            for r in self.model_repo_roots:
+                norm_root = os.path.normcase(r['path']) + os.sep
+                if norm_chosen == norm_root or norm_chosen.startswith(norm_root):
+                    is_covered = True
+                    break
+            if not is_covered:
+                self.model_repo_roots.append({'path': chosen, 'label': os.path.basename(chosen), 'builtin': False})
+                if hasattr(self, 'scan_downloaded_models'):
+                    self.scan_downloaded_models()
+                Messagebox.ok(f"已添加「{os.path.basename(chosen)}」到模型仓库扫描列表。", "已同步", parent=self.root)
+
+    def _sync_dl_dir_display(self):
+        """Update the download directory label."""
+        app_dir = os.path.dirname(self.get_config_path(''))
+        default_dir = os.path.join(app_dir, 'models')
+        path = self.ms_download_root if self.ms_download_root else default_dir
+        # Show shortened display
+        if len(path) > 50:
+            display = "..." + path[-47:]
+        else:
+            display = path
+        self._dl_dir_display.config(text=display)
+
+    def _ms_get_repo_dir(self, repo=None):
+        """Parse repo ID and return the save directory path.
+        E.g. 'unsloth/Qwen3.6-35B-A3B-GGUF' → '{root}/unsloth/Qwen3.6-35B-A3B-GGUF/'
+        Root is self.ms_download_root if set, else default {app_dir}/models/.
+        If repo is None, uses self.ms_repo (main model repo).
+        """
+        if repo is None:
+            repo = self.ms_repo.get().strip()
+        app_dir = os.path.dirname(self.get_config_path(''))
+        root = self.ms_download_root if self.ms_download_root else os.path.join(app_dir, 'models')
         # Replace / with \ for windows, normalize path
         safe_name = repo.replace('/', os.sep).replace('\\', os.sep)
-        return os.path.join(app_dir, 'models', safe_name)
+        return os.path.join(root, safe_name)
     
     def browse_ms_files(self):
         """Query ModelScope API to list GGUF files in the specified repo."""
@@ -1528,7 +1597,7 @@ class LlamaServerGUI:
         
         def fetch():
             try:
-                url = f"https://www.modelscope.cn/api/v1/models/{repo}/repo/files"
+                url = f"https://www.modelscope.cn/api/v1/models/{repo}/repo/files?Recursive=true"
                 req = urllib.request.Request(url)
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
@@ -1674,7 +1743,7 @@ class LlamaServerGUI:
         
         # Check existing files
         for fi in files_to_dl:
-            save_path = os.path.join(repo_dir, fi['name'])
+            save_path = os.path.join(repo_dir, fi['path'])
             if os.path.exists(save_path):
                 reply = Messagebox.yesno(
                     f"文件 {fi['name']} 已存在于\n{save_path}\n是否覆盖？",
@@ -1718,9 +1787,11 @@ class LlamaServerGUI:
         
         file_info = self._ms_dl_queue.pop(0)
         repo = self._ms_dl_repo
-        filename = file_info['name']
-        save_path = os.path.join(self._ms_dl_dir, filename)
+        file_rel_path = file_info['path']
+        save_path = os.path.join(self._ms_dl_dir, file_rel_path)
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
         
+        filename = file_info.get('name', os.path.basename(file_rel_path))
         idx = len(self._ms_dl_results) + 1
         total = len(self._ms_dl_results) + len(self._ms_dl_queue) + 1
         self.ms_progress_label.config(text=f"({idx}/{total}) 正在下载 {filename}...")
@@ -1777,12 +1848,13 @@ class LlamaServerGUI:
                     pass
         # Clean up all .tmp files in the download directory
         if os.path.exists(self._ms_dl_dir):
-            for fname in os.listdir(self._ms_dl_dir):
-                if fname.endswith('.tmp'):
-                    try:
-                        os.remove(os.path.join(self._ms_dl_dir, fname))
-                    except OSError:
-                        pass
+            for root, dirs, files in os.walk(self._ms_dl_dir):
+                for fname in files:
+                    if fname.endswith('.tmp'):
+                        try:
+                            os.remove(os.path.join(root, fname))
+                        except OSError:
+                            pass
     
     def _dl_queue_failed(self, error_msg, partial_path):
         """Handle a download failure in the queue."""
@@ -1931,10 +2003,8 @@ class LlamaServerGUI:
         repo = self.draft_ms_repo.get().strip()
         filename = file_info['name']
         
-        # Save to same directory structure
-        app_dir = os.path.dirname(self.get_config_path(''))
-        safe_name = repo.replace('/', os.sep)
-        dest_dir = os.path.join(app_dir, 'models', safe_name)
+        # Save to same directory structure (respects custom download root)
+        dest_dir = self._ms_get_repo_dir(repo=repo)
         os.makedirs(dest_dir, exist_ok=True)
         save_path = os.path.join(dest_dir, filename)
         
@@ -1973,8 +2043,8 @@ class LlamaServerGUI:
         self.draft_dl_btn.config(state=tk.NORMAL)
         if not success:
             self.draft_status_var.set(f"❌ 下载失败：{result}")
-            app_dir = os.path.dirname(self.get_config_path(''))
-            partial = os.path.join(app_dir, 'models', self.draft_ms_repo.get().strip().replace('/', os.sep), filename + '.tmp')
+            dest_dir = self._ms_get_repo_dir(repo=self.draft_ms_repo.get().strip())
+            partial = os.path.join(dest_dir, filename + '.tmp')
             if os.path.exists(partial):
                 try: os.remove(partial)
                 except OSError: pass
@@ -2312,7 +2382,6 @@ class LlamaServerGUI:
         
         Uses _PARAM_DEFS as single source of truth — no more manual arg dicts.
         """
-        import json
         if not self.model_path.get().strip():
             Messagebox.show_error("请选择模型路径！", "错误")
             return None
@@ -2325,8 +2394,7 @@ class LlamaServerGUI:
         
         # ── auto-generated from _PARAM_DEFS ──
         for ck, an, flag, kind, default in self._PARAM_DEFS:
-            if ck in ("model_path", "ctx_size", "gpu_layers", "flash_attn",
-                       "reasoning_effort", "cache_prompt", "numa"):
+            if ck in self._SPECIAL_PARAMS:
                 continue  # handled specially below
             
             var = self._get_var(an)
@@ -2439,7 +2507,6 @@ class LlamaServerGUI:
         self.server_status_var.set("⏳ 启动中...")
         self.server_status_label.config(foreground="orange")
         
-        import time
         self._startup_start_time = time.perf_counter()
         if hasattr(self, '_startup_sec'):
             del self._startup_sec  # reset for new run
@@ -2513,10 +2580,24 @@ class LlamaServerGUI:
         
         self.output_text.see(tk.END)
     
+    def _monitor_loop(self, url, interval=5):
+        """Continuous health monitoring — ping every `interval` seconds."""
+        while self.is_running:
+            time.sleep(interval)
+            try:
+                req = urllib.request.Request(url)
+                start = time.time()
+                with urllib.request.urlopen(req, timeout=2) as resp:
+                    elapsed = int((time.time() - start) * 1000)
+                    if resp.status == 200:
+                        self.root.after(0, lambda ms=elapsed: self._set_server_healthy(ms))
+            except Exception:
+                self.root.after(0, self._set_server_unhealthy)
+                time.sleep(3)
+
     def _health_check_loop(self, host, port):
         """Periodically ping the server's health endpoint.
         Waits indefinitely for the model to load — no false timeout for large models."""
-        import time
         url = f"http://{host}:{port}/health"
         
         # Phase 1: Quick retry (every 1s, first 30 attempts)
@@ -2530,19 +2611,7 @@ class LlamaServerGUI:
                     elapsed = int((time.time() - start) * 1000)
                     if resp.status == 200:
                         self.root.after(0, lambda ms=elapsed: self._set_server_healthy(ms))
-                        # Continue monitoring (phase 3)
-                        while self.is_running:
-                            time.sleep(5)
-                            try:
-                                req = urllib.request.Request(url)
-                                start = time.time()
-                                with urllib.request.urlopen(req, timeout=2) as resp:
-                                    elapsed = int((time.time() - start) * 1000)
-                                    if resp.status == 200:
-                                        self.root.after(0, lambda ms=elapsed: self._set_server_healthy(ms))
-                            except Exception:
-                                self.root.after(0, self._set_server_unhealthy)
-                                time.sleep(3)
+                        self._monitor_loop(url)
                         return
             except Exception:
                 if attempt == 1:
@@ -2560,19 +2629,7 @@ class LlamaServerGUI:
                     elapsed = int((time.time() - start) * 1000)
                     if resp.status == 200:
                         self.root.after(0, lambda ms=elapsed: self._set_server_healthy(ms))
-                        # Enter monitoring phase
-                        while self.is_running:
-                            time.sleep(5)
-                            try:
-                                req = urllib.request.Request(url)
-                                start = time.time()
-                                with urllib.request.urlopen(req, timeout=2) as resp:
-                                    elapsed = int((time.time() - start) * 1000)
-                                    if resp.status == 200:
-                                        self.root.after(0, lambda ms=elapsed: self._set_server_healthy(ms))
-                            except Exception:
-                                self.root.after(0, self._set_server_unhealthy)
-                                time.sleep(3)
+                        self._monitor_loop(url)
                         return
             except Exception:
                 pass
@@ -2580,7 +2637,6 @@ class LlamaServerGUI:
         self.root.after(0, lambda: self.server_status_var.set("⏹ 已停止"))
     
     def _set_server_healthy(self, response_ms):
-        import time
         self.server_status_label.config(foreground="green")
         # Only record startup time on the very first health check success
         if not hasattr(self, '_startup_sec'):
@@ -2614,6 +2670,7 @@ class LlamaServerGUI:
         config['ctx_size_auto'] = self.ctx_size_auto.get()
         config['engine_dir'] = self.selected_engine_dir
         config['theme'] = self.current_theme
+        config['ms_download_root'] = self.ms_download_root
         if hasattr(self, 'model_repo_roots'):
             config['model_repo_roots'] = [r for r in self.model_repo_roots if not r.get('builtin')]
         try:
@@ -2693,6 +2750,13 @@ class LlamaServerGUI:
             saved_theme = config.get('theme', 'darkly')
             if saved_theme in ('darkly', 'flatly') and saved_theme != self.current_theme:
                 self.toggle_theme()
+            
+            # Restore download root
+            saved_root = config.get('ms_download_root', '')
+            if saved_root and os.path.isdir(saved_root):
+                self.ms_download_root = saved_root
+            else:
+                self.ms_download_root = ""
             
             # Non-registered params
             self.ctx_size_auto.set(config.get('ctx_size_auto', False))
