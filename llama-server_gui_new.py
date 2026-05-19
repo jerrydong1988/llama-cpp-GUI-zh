@@ -258,8 +258,8 @@ class LlamaServerGUI:
         self.spec_draft_n_min = tk.StringVar(value="")
         self.create_spinbox(spec_group, "最小草稿令牌数 (--spec-draft-n-min):", self.spec_draft_n_min, "推测解码最小草稿令牌数（默认 0）。", row=3, from_=0, to=512, increment=1)
         self.spec_type = tk.StringVar()
-        spec_types = ["", "none", "draft-simple", "draft-eagle3", "draft-mtp", "ngram-simple", "ngram-map-k", "ngram-mod", "ngram-cache"]
-        self.create_combobox(spec_group, "推测解码类型 (--spec-type):", self.spec_type, "推测解码类型。draft-mtp = 多令牌预测，draft-simple = 简单草稿，ngram-mod = ngram 缓存等。可组合多个，用逗号分隔。", spec_types, row=4)
+        spec_types = ["", "none", "mtp", "ngram-cache", "ngram-simple", "ngram-map-k", "ngram-map-k4v", "ngram-mod", "draft-simple", "draft-eagle3", "draft-mtp"]
+        self.create_combobox(spec_group, "推测解码类型 (--spec-type):", self.spec_type, "推测解码类型。无草稿模型时（模型自带MTP头）可选：mtp / ngram-cache / ngram-mod 等；有草稿模型时（-md 指定）可选：draft-simple / draft-eagle3 / draft-mtp。可组合多个，用逗号分隔。", spec_types, row=4)
         self.draft_hf_repo = tk.StringVar()
         self.create_entry(spec_group, "草稿 HF 仓库 (--hf-repo-draft):", self.draft_hf_repo, "草稿模型的 HuggingFace 仓库，例如 ggml-org/Qwen2.5-0.5B-GGUF:Q4_K_M，设置后自动下载。", row=5)
 
