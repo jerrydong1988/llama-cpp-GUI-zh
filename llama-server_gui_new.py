@@ -157,6 +157,8 @@ class LlamaServerGUI:
         self.create_file_entry(ext_group, "LoRA 路径 (--lora):", self.lora_path, "LoRA 适配器文件的路径（可选）。", ".gguf", row=0)
         self.mmproj_path = tk.StringVar()
         self.create_file_entry(ext_group, "多模态投影器 (--mmproj):", self.mmproj_path, "多模态投影器文件的路径（视觉模型用）。", ".gguf", row=1)
+        self.grammar_file = tk.StringVar()
+        self.create_file_entry(ext_group, "语法文件 (--grammar-file):", self.grammar_file, "结构化输出用的 GBNF 语法文件路径（*.gbnf）。", ".gbnf", row=2)
         
 
         # --- Chat Behavior ---
@@ -179,6 +181,8 @@ class LlamaServerGUI:
         self.create_combobox(chat_group, "推理开关 (--reasoning):", self.reasoning, "启用/禁用/自动推理（思考）功能。off 时加载更快，on 开启思考过程但加载稍慢。MTP 模型都可正常使用。", reasoning_options, row=3)
         self.jinja = tk.BooleanVar(value=False)
         self.create_checkbutton(chat_group, "启用 Jinja (--jinja)", self.jinja, "启用 Jinja2 模板（某些自定义模板需要）。", row=4)
+        self.reasoning_budget = tk.StringVar(value="")
+        self.create_spinbox(chat_group, "推理预算 (--reasoning-budget):", self.reasoning_budget, "推理（思考）过程的令牌预算（默认 0 = 无限制）。", from_=0, to=65536, increment=256, row=5)
 
     def setup_generation_tab(self, parent):
         """Configures the 'Generation' tab for sampling and output control."""
@@ -217,6 +221,74 @@ class LlamaServerGUI:
         self.create_spinbox(sampling_group, "频率惩罚 (--frequency-penalty):", self.frequency_penalty, "词频惩罚（默认 0.0）。降低高频词重复出现。", from_=0, to=2, increment=0.1, row=7)
         self.repeat_last_n = tk.StringVar(value="")
         self.create_spinbox(sampling_group, "惩罚窗口 (--repeat-last-n):", self.repeat_last_n, "重复惩罚考虑的最近令牌数（默认 64，0 = 禁用，-1 = 上下文大小）。", from_=-1, to=4096, increment=1, row=8)
+
+        # --- Advanced Sampling (collapsible) ---
+        self.adv_sampling_visible = tk.BooleanVar(value=False)
+        adv_toggle_frame = ttk.Frame(sampling_group)
+        adv_toggle_frame.grid(row=9, column=0, columnspan=3, sticky=tk.W, pady=(10, 0))
+        adv_toggle = ttk.Checkbutton(adv_toggle_frame, text="▸ 高级采样", variable=self.adv_sampling_visible, bootstyle="round-toggle")
+        adv_toggle.pack(side=tk.LEFT)
+        ToolTip(adv_toggle, "展开高级采样参数（Mirostat、XTC、动态温度、DRY 等）。")
+
+        self.adv_sampling_frame = ttk.Frame(sampling_group)
+        self.adv_sampling_frame.grid(row=10, column=0, columnspan=3, sticky=tk.EW, pady=5)
+        self.adv_sampling_frame.grid_remove()  # hidden by default
+
+        def toggle_adv_sampling():
+            if self.adv_sampling_visible.get():
+                self.adv_sampling_frame.grid()
+            else:
+                self.adv_sampling_frame.grid_remove()
+        self.adv_sampling_visible.trace_add('write', lambda *_: toggle_adv_sampling())
+
+        row = 0
+        # --- Mirostat ---
+        miro_group = ttk.Labelframe(self.adv_sampling_frame, text="Mirostat", padding="5")
+        miro_group.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=2); row += 1
+        self.mirostat = tk.StringVar()
+        self.create_combobox(miro_group, "模式 (--mirostat):", self.mirostat, "Mirostat 采样模式（0=禁用, 1=v1, 2=v2，默认 0）。", ["", "0", "1", "2"], row=0)
+        self.mirostat_lr = tk.StringVar(value="")
+        self.create_spinbox(miro_group, "学习率 (--mirostat-lr):", self.mirostat_lr, "Mirostat 学习率（默认 0.01）。", from_=0.001, to=1, increment=0.001, row=1)
+        self.mirostat_ent = tk.StringVar(value="")
+        self.create_spinbox(miro_group, "目标熵 (--mirostat-ent):", self.mirostat_ent, "Mirostat 目标熵（默认 5.0）。", from_=0, to=10, increment=0.1, row=2)
+
+        # --- XTC ---
+        xtc_group = ttk.Labelframe(self.adv_sampling_frame, text="XTC 采样", padding="5")
+        xtc_group.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=2); row += 1
+        self.xtc_probability = tk.StringVar(value="")
+        self.create_spinbox(xtc_group, "概率 (--xtc-probability):", self.xtc_probability, "XTC 采样概率（默认 0.0 = 禁用）。", from_=0, to=1, increment=0.05, row=0)
+        self.xtc_threshold = tk.StringVar(value="")
+        self.create_spinbox(xtc_group, "阈值 (--xtc-threshold):", self.xtc_threshold, "XTC 阈值（默认 0.1）。", from_=0, to=1, increment=0.05, row=1)
+
+        # --- Dynamic Temperature ---
+        dyn_group = ttk.Labelframe(self.adv_sampling_frame, text="动态温度", padding="5")
+        dyn_group.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=2); row += 1
+        self.dynatemp_range = tk.StringVar(value="")
+        self.create_spinbox(dyn_group, "范围 (--dynatemp-range):", self.dynatemp_range, "动态温度范围（默认 0.0 = 禁用）。", from_=0, to=10, increment=0.1, row=0)
+        self.dynatemp_exp = tk.StringVar(value="")
+        self.create_spinbox(dyn_group, "指数 (--dynatemp-exp):", self.dynatemp_exp, "动态温度指数（默认 1.0）。", from_=0, to=5, increment=0.1, row=1)
+
+        # --- Typical-P ---
+        typ_group = ttk.Labelframe(self.adv_sampling_frame, text="典型采样", padding="5")
+        typ_group.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=2); row += 1
+        self.typical_p = tk.StringVar(value="")
+        self.create_spinbox(typ_group, "Typical-P (--typical-p):", self.typical_p, "局部典型采样（默认 1.0，1.0 = 禁用）。", from_=0, to=1, increment=0.05, row=0)
+
+        # --- DRY ---
+        dry_group = ttk.Labelframe(self.adv_sampling_frame, text="DRY 采样", padding="5")
+        dry_group.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=2); row += 1
+        self.dry_multiplier = tk.StringVar(value="")
+        self.create_spinbox(dry_group, "倍数 (--dry-multiplier):", self.dry_multiplier, "DRY 重复惩罚倍数（默认 0.0 = 禁用）。", from_=0, to=10, increment=0.1, row=0)
+        self.dry_base = tk.StringVar(value="")
+        self.create_spinbox(dry_group, "基数 (--dry-base):", self.dry_base, "DRY 惩罚基数（默认 1.75）。", from_=0, to=10, increment=0.1, row=1)
+        self.dry_allowed_length = tk.StringVar(value="")
+        self.create_spinbox(dry_group, "允许长度 (--dry-allowed-length):", self.dry_allowed_length, "DRY 允许的重复长度（默认 2）。", from_=0, to=1024, increment=1, row=2)
+        self.dry_penalty_last_n = tk.StringVar(value="")
+        self.create_spinbox(dry_group, "惩罚窗口 (--dry-penalty-last-n):", self.dry_penalty_last_n, "DRY 要考虑的最近令牌数（默认 -1 = 整个上下文）。", from_=-1, to=999999, increment=1, row=3)
+        self.dry_sequence_breaker = tk.StringVar(value="")
+        self.create_entry(dry_group, "分隔符 (--dry-sequence-breaker):", self.dry_sequence_breaker, "DRY 序列分隔符（例如 \"\\n\"）。", row=4)
+
+
 
 
     def setup_performance_core_tab(self, parent):
@@ -314,6 +386,10 @@ class LlamaServerGUI:
         self.create_entry(net_group, "主机 (--host):", self.host, "监听的 IP 地址（0.0.0.0 允许网络访问）。", row=0)
         self.port = tk.StringVar(value="8080")
         self.create_entry(net_group, "端口 (--port):", self.port, "服务器监听的网络端口。", row=1)
+        self.ssl_key_file = tk.StringVar()
+        self.create_file_entry(net_group, "SSL 私钥 (--ssl-key-file):", self.ssl_key_file, "SSL 私钥文件路径（启用 HTTPS）。", ".key", row=2)
+        self.ssl_cert_file = tk.StringVar()
+        self.create_file_entry(net_group, "SSL 证书 (--ssl-cert-file):", self.ssl_cert_file, "SSL 证书文件路径。", ".pem", row=3)
 
         # --- Access & Features ---
         access_group = ttk.Labelframe(parent, text="访问与功能", padding="10")
@@ -1991,6 +2067,24 @@ class LlamaServerGUI:
             '--presence-penalty': self.presence_penalty,
             '--min-p': self.min_p,
             '--seed': self.seed,
+            '--mirostat': self.mirostat,
+            '--mirostat-lr': self.mirostat_lr,
+            '--mirostat-ent': self.mirostat_ent,
+            '--xtc-probability': self.xtc_probability,
+            '--xtc-threshold': self.xtc_threshold,
+            '--dynatemp-range': self.dynatemp_range,
+            '--dynatemp-exp': self.dynatemp_exp,
+            '--typical-p': self.typical_p,
+            '--dry-multiplier': self.dry_multiplier,
+            '--dry-base': self.dry_base,
+            '--dry-allowed-length': self.dry_allowed_length,
+            '--dry-penalty-last-n': self.dry_penalty_last_n,
+            '--dry-sequence-breaker': self.dry_sequence_breaker,
+            '--grammar-file': self.grammar_file,
+            '--json-schema': self.json_schema,
+            '--ssl-key-file': self.ssl_key_file,
+            '--ssl-cert-file': self.ssl_cert_file,
+            '--reasoning-budget': self.reasoning_budget,
             '--cache-type-k': self.cache_type_k, '--cache-type-v': self.cache_type_v
         }
         for flag, var in args.items():
@@ -2011,7 +2105,8 @@ class LlamaServerGUI:
             '--mlock': self.mlock, '--embedding': self.embedding,
             '--jinja': self.jinja, '-v': self.verbose,
             '--reranking': self.reranking,
-            '--ignore-eos': self.ignore_eos
+            '--ignore-eos': self.ignore_eos,
+            '--context-shift': self.context_shift
         }
         for flag, var in bool_args.items():
             if var.get():
@@ -2210,7 +2305,20 @@ class LlamaServerGUI:
             'reasoning': self.reasoning.get(),
             'engine_dir': self.selected_engine_dir,
             'model_repo_roots': [r for r in self.model_repo_roots if not r.get('builtin')],
-            'cache_type_k': self.cache_type_k.get(), 'cache_type_v': self.cache_type_v.get()
+            'cache_type_k': self.cache_type_k.get(), 'cache_type_v': self.cache_type_v.get(),
+            'mirostat': self.mirostat.get(), 'mirostat_lr': self.mirostat_lr.get(),
+            'mirostat_ent': self.mirostat_ent.get(),
+            'xtc_probability': self.xtc_probability.get(), 'xtc_threshold': self.xtc_threshold.get(),
+            'dynatemp_range': self.dynatemp_range.get(), 'dynatemp_exp': self.dynatemp_exp.get(),
+            'typical_p': self.typical_p.get(),
+            'dry_multiplier': self.dry_multiplier.get(), 'dry_base': self.dry_base.get(),
+            'dry_allowed_length': self.dry_allowed_length.get(),
+            'dry_penalty_last_n': self.dry_penalty_last_n.get(),
+            'dry_sequence_breaker': self.dry_sequence_breaker.get(),
+            'grammar_file': self.grammar_file.get(), 'json_schema': self.json_schema.get(),
+            'ssl_key_file': self.ssl_key_file.get(), 'ssl_cert_file': self.ssl_cert_file.get(),
+            'reasoning_budget': self.reasoning_budget.get(),
+            'context_shift': self.context_shift.get()
         }
         try:
             # Determine where to save: prefer provided path, otherwise show Save As dialog
@@ -2343,6 +2451,25 @@ class LlamaServerGUI:
             self.presence_penalty.set(config.get('presence_penalty', ''))
             self.min_p.set(config.get('min_p', ''))
             self.seed.set(config.get('seed', ''))
+            self.mirostat.set(config.get('mirostat', ''))
+            self.mirostat_lr.set(config.get('mirostat_lr', ''))
+            self.mirostat_ent.set(config.get('mirostat_ent', ''))
+            self.xtc_probability.set(config.get('xtc_probability', ''))
+            self.xtc_threshold.set(config.get('xtc_threshold', ''))
+            self.dynatemp_range.set(config.get('dynatemp_range', ''))
+            self.dynatemp_exp.set(config.get('dynatemp_exp', ''))
+            self.typical_p.set(config.get('typical_p', ''))
+            self.dry_multiplier.set(config.get('dry_multiplier', ''))
+            self.dry_base.set(config.get('dry_base', ''))
+            self.dry_allowed_length.set(config.get('dry_allowed_length', ''))
+            self.dry_penalty_last_n.set(config.get('dry_penalty_last_n', ''))
+            self.dry_sequence_breaker.set(config.get('dry_sequence_breaker', ''))
+            self.grammar_file.set(config.get('grammar_file', ''))
+            self.json_schema.set(config.get('json_schema', ''))
+            self.ssl_key_file.set(config.get('ssl_key_file', ''))
+            self.ssl_cert_file.set(config.get('ssl_cert_file', ''))
+            self.reasoning_budget.set(config.get('reasoning_budget', ''))
+            self.context_shift.set(config.get('context_shift', False))
             # Load cache type settings (default: none / empty)
             try:
                 self.cache_type_k.set(config.get('cache_type_k', ''))
