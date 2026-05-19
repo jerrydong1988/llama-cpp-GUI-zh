@@ -254,15 +254,7 @@ class LlamaServerGUI:
         self.draft_gpu_layers = tk.StringVar(value="")
         self.create_spinbox(spec_group, "草稿 GPU 层数 (-ngld):", self.draft_gpu_layers, "草稿模型的 GPU 层数。", row=1, from_=0, to=99, increment=1)
         self.draft_tokens = tk.StringVar(value="")
-        self.create_spinbox(spec_group, "草稿令牌上限 (--spec-draft-n-max):", self.draft_tokens, "推测解码最大草稿令牌数（默认 16）。--draft 已废弃，改用此参数。", row=2, from_=1, to=1024, increment=1)
-        self.spec_draft_n_min = tk.StringVar(value="")
-        self.create_spinbox(spec_group, "最小草稿令牌数 (--spec-draft-n-min):", self.spec_draft_n_min, "推测解码最小草稿令牌数（默认 0）。", row=3, from_=0, to=512, increment=1)
-        self.spec_type = tk.StringVar()
-        spec_types = ["", "none", "draft-simple", "draft-eagle3", "draft-mtp", "ngram-simple", "ngram-map-k", "ngram-mod", "ngram-cache"]
-        self.create_combobox(spec_group, "推测解码类型 (--spec-type):", self.spec_type, "推测解码类型。draft-mtp = 多令牌预测，draft-simple = 简单草稿，ngram-mod = ngram 缓存等。可组合多个，用逗号分隔。", spec_types, row=4)
-        self.draft_hf_repo = tk.StringVar()
-        self.create_entry(spec_group, "草稿 HF 仓库 (--hf-repo-draft):", self.draft_hf_repo, "草稿模型的 HuggingFace 仓库，例如 ggml-org/Qwen2.5-0.5B-GGUF:Q4_K_M，设置后自动下载。", row=5)
-
+        self.create_spinbox(spec_group, "草稿令牌数 (--draft):", self.draft_tokens, "草稿令牌数（例如 5）。", row=2, from_=1, to=1024, increment=1)
         # --- Server Reliability ---
         server_rel_group = ttk.Labelframe(parent, text="服务器可靠性", padding="10")
         server_rel_group.pack(fill=tk.X, pady=5)
@@ -526,10 +518,7 @@ class LlamaServerGUI:
             '-np': self.parallel, '--lora': self.lora_path,
             '--mmproj': self.mmproj_path, '--chat-template': self.chat_template,
             '-md': self.draft_model_path, '-ngld': self.draft_gpu_layers,
-            '--spec-draft-n-max': self.draft_tokens,
-            '--spec-draft-n-min': self.spec_draft_n_min,
-            '--spec-type': self.spec_type,
-            '--hf-repo-draft': self.draft_hf_repo, '--n-cpu-moe': self.moe_cpu_layers,
+            '--draft': self.draft_tokens, '--n-cpu-moe': self.moe_cpu_layers,
             '--reasoning-format': self.reasoning_format, '-ub': self.ubatch_size,
             '-n': self.n_predict, '--temp': self.temp, '--top-k': self.top_k,
             '--top-p': self.top_p, '--repeat-penalty': self.repeat_penalty,
