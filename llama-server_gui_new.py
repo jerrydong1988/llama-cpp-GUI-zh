@@ -24,7 +24,7 @@ except ImportError:
 class LlamaServerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("LLaMA Server GUI Manager")
+        self.root.title("LLaMA 服务器管理器")
         self.root.geometry("1080x720")
         self.root.minsize(1080, 720)
 
@@ -72,16 +72,16 @@ class LlamaServerGUI:
         left_button_frame = ttk.Frame(control_frame)
         left_button_frame.pack(side=tk.LEFT)
         # Save = Save As (choose name) and Load = Browse and pick a config
-        self.create_button(left_button_frame, "Save As 💾", self.save_config, "Save the current settings to a chosen file.", bootstyle="secondary")
-        self.create_button(left_button_frame, "Load (Browse) 📂", lambda: self.load_config(browse=True), "Browse and load a saved config.", bootstyle="secondary")
-        self.create_button(left_button_frame, "Generate Command ⚡", self.show_command, "Show the final command to be executed.", bootstyle="info")
+        self.create_button(left_button_frame, "另存为 💾", self.save_config, "Save the current settings to a chosen file.", bootstyle="secondary")
+        self.create_button(left_button_frame, "加载配置 📂", lambda: self.load_config(browse=True), "Browse and load a saved config.", bootstyle="secondary")
+        self.create_button(left_button_frame, "生成命令 ⚡", self.show_command, "Show the final command to be executed.", bootstyle="info")
 
         # Right-aligned buttons
         right_button_frame = ttk.Frame(control_frame)
         right_button_frame.pack(side=tk.RIGHT)
-        self.browser_button = self.create_button(right_button_frame, "Open Browser 🌐", self.open_browser, "Access the server web UI.", state=tk.DISABLED, bootstyle="primary-outline")
-        self.stop_button = self.create_button(right_button_frame, "Stop Server ⏹️", self.stop_server, "Stop the running server process.", state=tk.DISABLED, bootstyle="danger")
-        self.start_button = self.create_button(right_button_frame, "Start Server ▶️", self.start_server, "Start the server with current settings.", bootstyle="success")
+        self.browser_button = self.create_button(right_button_frame, "打开浏览器 🌐", self.open_browser, "Access the server web UI.", state=tk.DISABLED, bootstyle="primary-outline")
+        self.stop_button = self.create_button(right_button_frame, "停止服务器 ⏹️", self.stop_server, "Stop the running server process.", state=tk.DISABLED, bootstyle="danger")
+        self.start_button = self.create_button(right_button_frame, "启动服务器 ▶️", self.start_server, "Start the server with current settings.", bootstyle="success")
 
         # --- Notebook (Packed SECOND to fill the remaining space) ---
         notebook = ttk.Notebook(main_container, bootstyle="primary")
@@ -95,12 +95,12 @@ class LlamaServerGUI:
         server_api_frame = ttk.Frame(notebook, padding="10")
         output_frame = ttk.Frame(notebook, padding="10")
 
-        notebook.add(model_frame, text="  Models ")
-        notebook.add(generation_frame, text=" Generation ")
-        notebook.add(performance_core_frame, text=" Performance ")
-        notebook.add(performance_advanced_frame, text=" Advanced ")
-        notebook.add(server_api_frame, text=" Server & API ")
-        notebook.add(output_frame, text=" Server Output ")
+        notebook.add(model_frame, text="  模型  ")
+        notebook.add(generation_frame, text="  生成参数  ")
+        notebook.add(performance_core_frame, text="  性能  ")
+        notebook.add(performance_advanced_frame, text="  高级  ")
+        notebook.add(server_api_frame, text="  服务器与API  ")
+        notebook.add(output_frame, text="  服务器输出  ")
 
         # --- Populate Tabs ---
         self.setup_model_tab(model_frame)
@@ -115,123 +115,154 @@ class LlamaServerGUI:
     def setup_model_tab(self, parent):
         """Configures the 'Model' tab for model files, extensions, and chat behavior."""
         # --- Primary Model ---
-        model_group = ttk.Labelframe(parent, text="Primary Model", padding="10")
+        model_group = ttk.Labelframe(parent, text="主模型", padding="10")
         model_group.pack(fill=tk.X, pady=5)
         self.model_path = tk.StringVar()
-        self.create_file_entry(model_group, "Model Path (-m):", self.model_path, "Path to the GGUF model file.", ".gguf", row=0)
+        self.create_file_entry(model_group, "模型路径 (-m):", self.model_path, "GGUF 模型文件的路径。", ".gguf", row=0)
         self.alias = tk.StringVar()
-        self.create_entry(model_group, "Model Alias (-a):", self.alias, "Set an alias for the model (used in API calls).", row=1)
+        self.create_entry(model_group, "模型别名 (-a):", self.alias, "为模型设置别名（API 调用时使用）。", row=1)
 
         # --- Model Extensions ---
-        ext_group = ttk.Labelframe(parent, text="Model Extensions", padding="10")
+        ext_group = ttk.Labelframe(parent, text="模型扩展", padding="10")
         ext_group.pack(fill=tk.X, pady=5)
         self.lora_path = tk.StringVar()
-        self.create_file_entry(ext_group, "LoRA Path (--lora):", self.lora_path, "Path to a LoRA adapter file (optional).", ".gguf", row=0)
+        self.create_file_entry(ext_group, "LoRA 路径 (--lora):", self.lora_path, "LoRA 适配器文件的路径（可选）。", ".gguf", row=0)
         self.mmproj_path = tk.StringVar()
-        self.create_file_entry(ext_group, "Multimodal Projector (--mmproj):", self.mmproj_path, "Path to a multimodal projector file (for vision models).", ".gguf", row=1)
+        self.create_file_entry(ext_group, "多模态投影器 (--mmproj):", self.mmproj_path, "多模态投影器文件的路径（视觉模型用）。", ".gguf", row=1)
+        # --- HuggingFace Auto Download ---
+        hf_group = ttk.Labelframe(parent, text="HuggingFace 自动下载", padding="10")
+        hf_group.pack(fill=tk.X, pady=5)
+        self.hf_repo = tk.StringVar()
+        self.create_entry(hf_group, "HF 仓库 (--hf-repo):", self.hf_repo, "HuggingFace 模型仓库，例如 ggml-org/gemma-3-1b-it-GGUF:Q4_K_M，设置后自动下载。", row=0)
+        self.hf_file = tk.StringVar()
+        self.create_entry(hf_group, "HF 文件 (--hf-file):", self.hf_file, "指定仓库中的具体文件名（可选，覆盖 --hf-repo 中的量化级别）。", row=1)
+
 
         # --- Chat Behavior ---
-        chat_group = ttk.Labelframe(parent, text="Chat Behavior", padding="10")
+        chat_group = ttk.Labelframe(parent, text="对话行为", padding="10")
         chat_group.pack(fill=tk.X, pady=5)
         self.chat_template = tk.StringVar()
-        chat_templates = ["", "bailing", "chatglm3", "chatglm4", "chatml", "command-r", "deepseek", "deepseek2", "gemma", "llama2", "llama3", "mistral", "openchat", "phi3", "vicuna", "zephyr"]
-        self.create_combobox(chat_group, "Template (--chat-template):", self.chat_template, "Select a chat template (leave blank for auto-detection).", chat_templates, row=0)
+        chat_templates = ["", "bailing", "chatglm3", "chatglm4", "chatml", "command-r", "deepseek", "deepseek2", "deepseek3", "exaone3", "gemma", "gpt-oss", "kimi-k2", "llama2", "llama3", "llama4", "mistral", "openchat", "phi3", "phi4", "vicuna", "zephyr"]
+        self.create_combobox(chat_group, "聊天模板 (--chat-template):", self.chat_template, "选择聊天模板（留空自动检测）。", chat_templates, row=0)
 
         self.reasoning_format = tk.StringVar()
         reasoning_formats = ["", "auto", "none", "deepseek"]
-        self.create_combobox(chat_group, "Reasoning Format (--reasoning-format):", self.reasoning_format, "Controls whether thought tags are allowed and/or extracted from the response.", reasoning_formats, row=1)
+        self.create_combobox(chat_group, "推理格式 (--reasoning-format):", self.reasoning_format, "控制是否允许/提取回复中的思考标签。", reasoning_formats, row=1)
 
         self.reasoning_effort = tk.StringVar()
         reasoning_levels = ["", "low", "medium", "high"]
-        self.create_combobox(chat_group, "Reasoning Effort:", self.reasoning_effort, "Set reasoning effort for chat template kwargs (some models).", reasoning_levels, row=2)
+        self.create_combobox(chat_group, "推理力度:", self.reasoning_effort, "为聊天模板设置推理力度（部分模型支持）。", reasoning_levels, row=2)
         
         self.jinja = tk.BooleanVar(value=False)
-        self.create_checkbutton(chat_group, "Enable Jinja (--jinja)", self.jinja, "Enable Jinja2 templating (required for some custom templates).", row=3)
+        self.create_checkbutton(chat_group, "启用 Jinja (--jinja)", self.jinja, "启用 Jinja2 模板（某些自定义模板需要）。", row=3)
 
     def setup_generation_tab(self, parent):
         """Configures the 'Generation' tab for sampling and output control."""
         # --- Output Control ---
-        output_group = ttk.Labelframe(parent, text="Output Control", padding="10")
+        output_group = ttk.Labelframe(parent, text="输出控制", padding="10")
         output_group.pack(fill=tk.X, pady=5, side=tk.TOP)
         
         self.n_predict = tk.StringVar(value="")
-        self.create_spinbox(output_group, "Tokens to Generate (-n, --n-predict):", self.n_predict, "Number of tokens to generate (default -1 = infinite).", from_=-1, to=131072, increment=1, row=0)
+        self.create_spinbox(output_group, "生成令牌数 (-n, --n-predict):", self.n_predict, "生成的令牌数（默认 -1 = 无限）。", from_=-1, to=131072, increment=1, row=0)
         
         self.ignore_eos = tk.BooleanVar(value=False)
-        self.create_checkbutton(output_group, "Ignore End-of-Sequence (--ignore-eos)", self.ignore_eos, "Prevents model from stopping early.", row=1)
+        self.create_checkbutton(output_group, "忽略结束标记 (--ignore-eos)", self.ignore_eos, "防止模型提前停止。", row=1)
         
         # --- Sampling Parameters ---
-        sampling_group = ttk.Labelframe(parent, text="Sampling Parameters", padding="10")
+        sampling_group = ttk.Labelframe(parent, text="采样参数", padding="10")
         sampling_group.pack(fill=tk.X, pady=5)
         
         self.temp = tk.StringVar(value="")
-        self.create_spinbox(sampling_group, "Temperature (--temp):", self.temp, "Creativity level (default 0.8). Lower = deterministic, higher = creative.", from_=0, to=2, increment=0.1, row=0)
+        self.create_spinbox(sampling_group, "温度 (--temp):", self.temp, "创造力级别（默认 0.8）。越低越确定，越高越有创造力。", from_=0, to=2, increment=0.1, row=0)
 
         self.top_k = tk.StringVar(value="")
-        self.create_spinbox(sampling_group, "Top-K (--top-k):", self.top_k, "Keep only top-k tokens when sampling (default 40).", from_=0, to=1000, increment=1, row=1)
+        self.create_spinbox(sampling_group, "Top-K (--top-k):", self.top_k, "采样时仅保留 top-k 个令牌（默认 40）。", from_=0, to=1000, increment=1, row=1)
         
         self.top_p = tk.StringVar(value="")
-        self.create_spinbox(sampling_group, "Top-P (--top-p):", self.top_p, "Nucleus sampling (default 0.9).", from_=0, to=1, increment=0.1, row=2)
+        self.create_spinbox(sampling_group, "Top-P (--top-p):", self.top_p, "核采样（默认 0.9）。", from_=0, to=1, increment=0.1, row=2)
 
         self.repeat_penalty = tk.StringVar(value="")
-        self.create_spinbox(sampling_group, "Repeat Penalty (--repeat-penalty):", self.repeat_penalty, "Penalizes repetition (default 1.0). Increase to reduce loops.", from_=0, to=2, increment=0.1, row=3)
+        self.create_spinbox(sampling_group, "重复惩罚 (--repeat-penalty):", self.repeat_penalty, "重复惩罚（默认 1.0）。增加以减少重复循环。", from_=0, to=2, increment=0.1, row=3)
+        self.seed = tk.StringVar(value="")
+        self.create_spinbox(sampling_group, "随机种子 (--seed):", self.seed, "RNG 种子（默认 -1 = 随机）。设为固定值可重现结果。", from_=-1, to=2147483647, increment=1, row=4)
+        self.min_p = tk.StringVar(value="")
+        self.create_spinbox(sampling_group, "Min-P (--min-p):", self.min_p, "最小概率采样（默认 0.05，0.0 = 禁用）。比 top-p 更新更好的采样方式。", from_=0, to=1, increment=0.05, row=5)
+        self.presence_penalty = tk.StringVar(value="")
+        self.create_spinbox(sampling_group, "存在惩罚 (--presence-penalty):", self.presence_penalty, "话题存在惩罚（默认 0.0）。降低重复讨论相同话题。", from_=0, to=2, increment=0.1, row=6)
+        self.frequency_penalty = tk.StringVar(value="")
+        self.create_spinbox(sampling_group, "频率惩罚 (--frequency-penalty):", self.frequency_penalty, "词频惩罚（默认 0.0）。降低高频词重复出现。", from_=0, to=2, increment=0.1, row=7)
+        self.repeat_last_n = tk.StringVar(value="")
+        self.create_spinbox(sampling_group, "惩罚窗口 (--repeat-last-n):", self.repeat_last_n, "重复惩罚考虑的最近令牌数（默认 64，0 = 禁用，-1 = 上下文大小）。", from_=-1, to=4096, increment=1, row=8)
+
 
     def setup_performance_core_tab(self, parent):
         """Configures the 'Performance' tab for core speed and throughput settings."""
         # --- Core Performance ---
-        core_group = ttk.Labelframe(parent, text="Core Performance", padding="10")
+        core_group = ttk.Labelframe(parent, text="核心性能", padding="10")
         core_group.pack(fill=tk.X, pady=5, side=tk.TOP)
         self.ctx_size = tk.IntVar(value=4096)
-        self.create_slider(core_group, "Context Size (-c):", self.ctx_size, "Context size (sequence length) for the model.", from_=0, to=131072, resolution=1024, row=0)
+        self.create_slider(core_group, "上下文大小 (-c):", self.ctx_size, "模型的上下文大小（序列长度）。", from_=0, to=131072, resolution=1024, row=0)
         self.gpu_layers = tk.IntVar(value=99)
-        self.create_slider(core_group, "GPU Layers (-ngl):", self.gpu_layers, "Number of model layers to offload to GPU (99 for all).", from_=0, to=99, resolution=1, row=1)
+        self.create_slider(core_group, "GPU 层数 (-ngl):", self.gpu_layers, "卸载到 GPU 的模型层数（99 = 全部）。", from_=0, to=99, resolution=1, row=1)
         self.threads = tk.StringVar(value="")
-        self.create_spinbox(core_group, "CPU Threads (-t):", self.threads, "Number of CPU threads to use (e.g., 8).", from_=1, to=128, increment=1, row=2)
+        self.create_spinbox(core_group, "CPU 线程数 (-t):", self.threads, "使用的 CPU 线程数（例如 8）。", from_=1, to=128, increment=1, row=2)
         self.batch_size = tk.StringVar(value="")
-        self.create_spinbox(core_group, "Batch Size (-b):", self.batch_size, "Batch size for prompt processing (e.g., 2048).", from_=1, to=8192, increment=1, row=3)
+        self.create_spinbox(core_group, "批大小 (-b):", self.batch_size, "提示处理的批大小（例如 2048）。", from_=1, to=8192, increment=1, row=3)
         self.ubatch_size = tk.StringVar(value="")
-        self.create_spinbox(core_group, "Physical Batch Size (-ub):", self.ubatch_size, "Physical batch size. Lower values reduce VRAM use but slow things down.", from_=1, to=1024, increment=1, row=4)
+        self.create_spinbox(core_group, "物理批大小 (-ub):", self.ubatch_size, "物理批大小。较低值减少显存占用但降低速度。", from_=1, to=1024, increment=1, row=4)
 
         # --- Advanced Throughput ---
-        throughput_group = ttk.Labelframe(parent, text="Advanced Throughput", padding="10")
+        throughput_group = ttk.Labelframe(parent, text="高级吞吐量", padding="10")
         throughput_group.pack(fill=tk.X, pady=5)
         self.parallel = tk.StringVar(value="")
-        self.create_spinbox(throughput_group, "Parallel Sequences (-np):", self.parallel, "Number of parallel sequences to process (e.g., 4).", row=0, from_=1, to=16, increment=1)
+        self.create_spinbox(throughput_group, "并行序列数 (-np):", self.parallel, "并行处理的序列数（例如 4）。", row=0, from_=1, to=16, increment=1)
         self.cont_batching = tk.BooleanVar(value=False)
-        self.create_checkbutton(throughput_group, "Continuous Batching (-cb)", self.cont_batching, "Enable continuous batching for higher throughput.", row=1)
+        self.create_checkbutton(throughput_group, "持续批处理 (-cb)", self.cont_batching, "启用持续批处理以提高吞吐量。", row=1)
+        self.cache_prompt = tk.BooleanVar(value=True)
+        self.create_checkbutton(throughput_group, "提示缓存 (--cache-prompt)", self.cache_prompt, "启用提示缓存以提高重复请求的速度（默认启用）。", row=2)
+        self.threads_batch = tk.StringVar(value="")
+        self.create_spinbox(core_group, "批处理线程 (-tb, --threads-batch):", self.threads_batch, "提示处理和批处理时使用的线程数（默认同 --threads）。", from_=1, to=128, increment=1, row=5)
 
     def setup_performance_advanced_tab(self, parent):
         """Configures the 'Advanced' tab for memory, optimizations, and speculative decoding."""
         # --- Memory & Optimizations ---
-        mem_group = ttk.Labelframe(parent, text="Memory & Optimizations", padding="10")
+        mem_group = ttk.Labelframe(parent, text="内存与优化", padding="10")
         mem_group.pack(fill=tk.X, pady=5)
         self.flash_attn = tk.StringVar(value="auto")
         flash_attn_options = ["on", "off", "auto"]
-        self.create_combobox(mem_group, "Flash Attention (-fa):", self.flash_attn, "Set Flash Attention use ('on', 'off', or 'auto', default: 'auto').", flash_attn_options, row=0)
+        self.create_combobox(mem_group, "Flash Attention (-fa):", self.flash_attn, "设置 Flash Attention（on/off/auto，默认 auto）。", flash_attn_options, row=0)
         self.moe_cpu_layers = tk.StringVar(value="")
-        self.create_spinbox(mem_group, "MoE CPU Layers (--n-cpu-moe):", self.moe_cpu_layers, "MoE layers to keep on CPU if model doesn't fit on GPU.", row=1, from_=0, to=99, increment=1)
+        self.create_spinbox(mem_group, "MoE CPU 层数 (--n-cpu-moe):", self.moe_cpu_layers, "GPU 放不下时保留在 CPU 上的 MoE 层数。", row=1, from_=0, to=99, increment=1)
         self.mlock = tk.BooleanVar(value=False)
-        self.create_checkbutton(mem_group, "Memory Lock (--mlock)", self.mlock, "Lock model in RAM to prevent swapping.", row=2)
+        self.create_checkbutton(mem_group, "内存锁定 (--mlock)", self.mlock, "将模型锁定在 RAM 中防止交换。", row=2)
         self.no_mmap = tk.BooleanVar(value=False)
-        self.create_checkbutton(mem_group, "No Memory Mapping (--no-mmap)", self.no_mmap, "Disable memory mapping of the model file.", row=3)
+        self.create_checkbutton(mem_group, "禁用内存映射 (--no-mmap)", self.no_mmap, "禁用模型文件的内存映射。", row=3)
         self.numa = tk.BooleanVar(value=False)
-        self.create_checkbutton(mem_group, "NUMA Optimizations (--numa)", self.numa, "Enable NUMA-aware optimizations for specific hardware.", row=4)
+        self.create_checkbutton(mem_group, "NUMA 优化 (--numa)", self.numa, "启用 NUMA 感知优化（特定硬件）。", row=4)
         # --- Cache Type for Draft K/V (moved here from Speculative Decoding)
         cache_types = ["", "f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"]
         self.cache_type_k = tk.StringVar(value="")
-        self.create_combobox(mem_group, "Cache Type K (-ctk, --cache-type-k):", self.cache_type_k, "KV cache data type for K (default: f16).", cache_types, row=5)
+        self.create_combobox(mem_group, "K 缓存类型 (-ctk):", self.cache_type_k, "K 的 KV 缓存数据类型（默认 f16）。", cache_types, row=5)
         self.cache_type_v = tk.StringVar(value="")
-        self.create_combobox(mem_group, "Cache Type V (-ctv, --cache-type-v):", self.cache_type_v, "KV cache data type for V (default: f16).", cache_types, row=6)
+        self.create_combobox(mem_group, "V 缓存类型 (-ctv):", self.cache_type_v, "V 的 KV 缓存数据类型（默认 f16）。", cache_types, row=6)
 
         # --- Speculative Decoding ---
-        spec_group = ttk.Labelframe(parent, text="Speculative Decoding", padding="10")
+        spec_group = ttk.Labelframe(parent, text="推测解码", padding="10")
         spec_group.pack(fill=tk.X, pady=5)
         self.draft_model_path = tk.StringVar()
-        self.create_file_entry(spec_group, "Draft Model (-md):", self.draft_model_path, "Path to the draft model for speculative decoding.", ".gguf", row=0)
+        self.create_file_entry(spec_group, "草稿模型 (-md):", self.draft_model_path, "推测解码用的草稿模型路径。", ".gguf", row=0)
         self.draft_gpu_layers = tk.StringVar(value="")
-        self.create_spinbox(spec_group, "Draft GPU Layers (-ngld):", self.draft_gpu_layers, "Number of GPU layers for the draft model.", row=1, from_=0, to=99, increment=1)
+        self.create_spinbox(spec_group, "草稿 GPU 层数 (-ngld):", self.draft_gpu_layers, "草稿模型的 GPU 层数。", row=1, from_=0, to=99, increment=1)
         self.draft_tokens = tk.StringVar(value="")
-        self.create_spinbox(spec_group, "Draft Tokens (--draft):", self.draft_tokens, "Number of tokens to draft (e.g., 5).", row=2, from_=1, to=1024, increment=1)
+        self.create_spinbox(spec_group, "草稿令牌数 (--draft):", self.draft_tokens, "草稿令牌数（例如 5）。", row=2, from_=1, to=1024, increment=1)
+        # --- Server Reliability ---
+        server_rel_group = ttk.Labelframe(parent, text="服务器可靠性", padding="10")
+        server_rel_group.pack(fill=tk.X, pady=5)
+        self.timeout = tk.StringVar(value="")
+        self.create_spinbox(server_rel_group, "超时秒数 (--timeout):", self.timeout, "服务器读写超时秒数（默认 600）。", from_=1, to=3600, increment=10, row=0)
+        self.sleep_idle = tk.StringVar(value="")
+        self.create_spinbox(server_rel_group, "空闲休眠秒数 (--sleep-idle-seconds):", self.sleep_idle, "空闲 N 秒后自动卸载模型释放显存（默认 -1 = 禁用）。", from_=-1, to=86400, increment=60, row=1)
+
         
 
     def setup_server_api_tab(self, parent):
@@ -240,27 +271,33 @@ class LlamaServerGUI:
         parent.columnconfigure(0, weight=1)
         
         # --- Network Configuration ---
-        net_group = ttk.Labelframe(parent, text="Network Configuration", padding="10")
+        net_group = ttk.Labelframe(parent, text="网络配置", padding="10")
         net_group.grid(row=0, column=0, sticky=EW, pady=5)
         net_group.columnconfigure(1, weight=1)
         self.host = tk.StringVar(value="127.0.0.1")
-        self.create_entry(net_group, "Host (--host):", self.host, "IP address to listen on (0.0.0.0 for network access).", row=0)
+        self.create_entry(net_group, "主机 (--host):", self.host, "监听的 IP 地址（0.0.0.0 允许网络访问）。", row=0)
         self.port = tk.StringVar(value="8080")
-        self.create_entry(net_group, "Port (--port):", self.port, "Network port for the server to listen on.", row=1)
+        self.create_entry(net_group, "端口 (--port):", self.port, "服务器监听的网络端口。", row=1)
 
         # --- Access & Features ---
-        access_group = ttk.Labelframe(parent, text="Access & Features", padding="10")
+        access_group = ttk.Labelframe(parent, text="访问与功能", padding="10")
         access_group.grid(row=1, column=0, sticky=EW, pady=5)
         access_group.columnconfigure(1, weight=1)
         self.api_key = tk.StringVar()
-        self.create_entry(access_group, "API Key (--api-key):", self.api_key, "API key for bearer token authentication (optional).", row=0)
+        self.create_entry(access_group, "API 密钥 (--api-key):", self.api_key, "API 密钥，用于令牌认证（可选）。", row=0)
         self.no_webui = tk.BooleanVar(value=False)
-        self.create_checkbutton(access_group, "Disable Web UI (--no-webui)", self.no_webui, "Disable the built-in web interface.", row=1)
+        self.create_checkbutton(access_group, "禁用网页界面 (--no-webui)", self.no_webui, "禁用内置网页界面。", row=1)
         self.embedding = tk.BooleanVar(value=False)
-        self.create_checkbutton(access_group, "Embeddings Only (--embedding)", self.embedding, "Enable embedding-only mode (disables chat).", row=2)
+        self.create_checkbutton(access_group, "仅嵌入模式 (--embedding)", self.embedding, "启用仅嵌入模式（禁用聊天功能）。", row=2)
+        self.pooling = tk.StringVar()
+        pooling_options = ["", "none", "mean", "cls", "last", "rank"]
+        self.create_combobox(access_group, "嵌入池化 (--pooling):", self.pooling, "嵌入模型的池化类型（使用嵌入模式时需设置）。", pooling_options, row=3)
+        self.reranking = tk.BooleanVar(value=False)
+        self.create_checkbutton(access_group, "重排序端点 (--reranking)", self.reranking, "启用重排序端点（RAG 场景）。", row=4)
+
 
         # --- Custom Arguments Management ---
-        custom_group = ttk.Labelframe(parent, text="Custom Arguments Management", padding="10")
+        custom_group = ttk.Labelframe(parent, text="自定义参数管理", padding="10")
         custom_group.grid(row=2, column=0, sticky=NSEW, pady=5)
         custom_group.columnconfigure(0, weight=1)
         custom_group.rowconfigure(1, weight=1)
@@ -271,8 +308,8 @@ class LlamaServerGUI:
         add_arg_frame.columnconfigure(0, weight=1)
         self.new_arg_entry = ttk.Entry(add_arg_frame)
         self.new_arg_entry.grid(row=0, column=0, sticky=EW, padx=(0, 5))
-        ToolTip(self.new_arg_entry, "Enter a full argument with its value (e.g., --my-flag value) and press Add.")
-        add_button = ttk.Button(add_arg_frame, text="Add", command=self.add_custom_argument, bootstyle="success-outline")
+        ToolTip(self.new_arg_entry, "输入完整参数及其值（例如 --my-flag value），然后点击添加。")
+        add_button = ttk.Button(add_arg_frame, text="添加", command=self.add_custom_argument, bootstyle="success-outline")
         add_button.grid(row=0, column=1, sticky=E)
 
         # Scrollable list for existing arguments
@@ -283,19 +320,19 @@ class LlamaServerGUI:
         other_options_frame = ttk.Frame(custom_group)
         other_options_frame.grid(row=2, column=0, sticky=EW, pady=(10, 0))
         self.verbose = tk.BooleanVar(value=False)
-        verbose_cb = ttk.Checkbutton(other_options_frame, text="Verbose Logging (-v)", variable=self.verbose, bootstyle="round-toggle")
+        verbose_cb = ttk.Checkbutton(other_options_frame, text="详细日志 (-v)", variable=self.verbose, bootstyle="round-toggle")
         verbose_cb.pack(side=tk.LEFT)
-        ToolTip(verbose_cb, "Enable verbose server logging for debugging.")
+        ToolTip(verbose_cb, "启用详细服务器日志以便调试。")
         
     def setup_output_tab(self, parent):
         """Sets up the server output log view."""
-        ttk.Label(parent, text="Server Log Output:").pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(parent, text="服务器日志输出：").pack(anchor=tk.W, pady=(0, 5))
         monospace_font = ("Consolas", 10)
         self.output_text = ScrolledText(parent, height=20, wrap=tk.WORD, font=monospace_font, autohide=True)
         self.output_text.pack(fill=tk.BOTH, expand=True)
-        clear_btn = ttk.Button(parent, text="Clear Output", command=self.clear_output, bootstyle="secondary-outline")
+        clear_btn = ttk.Button(parent, text="清空输出", command=self.clear_output, bootstyle="secondary-outline")
         clear_btn.pack(pady=(10, 0), anchor=tk.E)
-        ToolTip(clear_btn, "Clear all text from the log output window.")
+        ToolTip(clear_btn, "清除日志输出窗口中的所有文本。")
 
     # --- UI Helper Methods ---
     def create_file_entry(self, parent, label_text, string_var, tooltip_text, file_ext, row):
@@ -306,11 +343,11 @@ class LlamaServerGUI:
         parent.columnconfigure(1, weight=1)
         entry = ttk.Entry(file_path_frame, textvariable=string_var)
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        browse_btn = ttk.Button(file_path_frame, text="Browse", command=lambda: self.browse_file(string_var, file_ext), bootstyle="primary")
+        browse_btn = ttk.Button(file_path_frame, text="浏览", command=lambda: self.browse_file(string_var, file_ext), bootstyle="primary")
         browse_btn.pack(side=tk.RIGHT)
         ToolTip(label, text=tooltip_text)
         ToolTip(entry, text=tooltip_text)
-        ToolTip(browse_btn, text=f"Select a {file_ext} file.")
+        ToolTip(browse_btn, text=f"选择一个 {file_ext} 文件。")
 
     def create_entry(self, parent, label_text, string_var, tooltip_text, row):
         label = ttk.Label(parent, text=label_text)
@@ -397,7 +434,7 @@ class LlamaServerGUI:
         if not arg_text:
             return
         if any(arg['value'] == arg_text for arg in self.custom_arguments):
-            Messagebox.show_warning("This argument already exists in the list.", "Duplicate Argument")
+            Messagebox.show_warning("该参数已存在于列表中。", "重复参数")
             return
             
         self.custom_arguments.append({"value": arg_text, "enabled": True})
@@ -425,7 +462,7 @@ class LlamaServerGUI:
             toggle.pack(side=LEFT, padx=(0, 10))
 
             label = ttk.Label(row_frame, text=arg_item["value"])
-            delete_btn = ttk.Button(row_frame, text="Delete", bootstyle="danger-link", command=lambda item=arg_item: self.delete_custom_argument(item))
+            delete_btn = ttk.Button(row_frame, text="删除", bootstyle="danger-link", command=lambda item=arg_item: self.delete_custom_argument(item))
             
             # Pack order matters: label is packed after edit logic is set up.
             delete_btn.pack(side=RIGHT, padx=(10, 0))
@@ -453,7 +490,7 @@ class LlamaServerGUI:
                 edit_entry.bind("<FocusOut>", save_edit)
 
             label.bind("<Double-1>", lambda e, item=arg_item, lbl=label, frame=row_frame, btn=delete_btn: start_edit(e, item, lbl, frame, btn))
-            ToolTip(label, "Double-click to edit this argument.")
+            ToolTip(label, "双击编辑此参数。")
             label.pack(side=LEFT, fill=X, expand=True, anchor=W)
 
 
@@ -461,14 +498,14 @@ class LlamaServerGUI:
     def browse_file(self, string_var, file_ext):
         filename = filedialog.askopenfilename(
             title=f"Select {file_ext} File",
-            filetypes=[(f"{file_ext.upper()} files", f"*{file_ext}"), ("All files", "*.*")]
+            filetypes=[(f"{file_ext.upper()} 文件", f"*{file_ext}"), ("所有文件", "*.*")]
         )
         if filename:
             string_var.set(filename)
 
     def generate_command(self):
         if not self.model_path.get().strip():
-            Messagebox.show_error("Model path is required!", "Error")
+            Messagebox.show_error("请选择模型路径！", "错误")
             return None
         
         cmd = ["llama-server", "-m", self.model_path.get().strip()]
@@ -485,6 +522,17 @@ class LlamaServerGUI:
             '--reasoning-format': self.reasoning_format, '-ub': self.ubatch_size,
             '-n': self.n_predict, '--temp': self.temp, '--top-k': self.top_k,
             '--top-p': self.top_p, '--repeat-penalty': self.repeat_penalty,
+            '--pooling': self.pooling,
+            '--sleep-idle-seconds': self.sleep_idle,
+            '-to': self.timeout,
+            '--tb': self.threads_batch,
+            '--repeat-last-n': self.repeat_last_n,
+            '--frequency-penalty': self.frequency_penalty,
+            '--presence-penalty': self.presence_penalty,
+            '--min-p': self.min_p,
+            '--seed': self.seed,
+            '--hf-file': self.hf_file,
+            '--hf-repo': self.hf_repo,
             '--cache-type-k': self.cache_type_k, '--cache-type-v': self.cache_type_v
         }
         for flag, var in args.items():
@@ -504,11 +552,16 @@ class LlamaServerGUI:
             '--no-webui': self.no_webui, '-cb': self.cont_batching,
             '--mlock': self.mlock, '--embedding': self.embedding,
             '--jinja': self.jinja, '-v': self.verbose,
+            '--reranking': self.reranking,
             '--ignore-eos': self.ignore_eos
         }
         for flag, var in bool_args.items():
             if var.get():
                 cmd.append(flag)
+
+        # Inverted logic: cache prompt is enabled by default, unchecked = --no-cache-prompt
+        if not self.cache_prompt.get():
+            cmd.append("--no-cache-prompt")
 
         if self.numa.get():
             cmd.extend(["--numa", "distribute"])
@@ -525,9 +578,9 @@ class LlamaServerGUI:
         if not cmd: return
         command_str = " ".join(f'"{arg}"' if " " in arg else arg for arg in cmd)
         cmd_window = ttk.Toplevel(self.root)
-        cmd_window.title("Generated Command")
+        cmd_window.title("生成的命令")
         cmd_window.geometry("1200x300")
-        ttk.Label(cmd_window, text="Generated Command:", padding="10 10 0 5").pack(anchor=tk.W)
+        ttk.Label(cmd_window, text="生成的命令：", padding="10 10 0 5").pack(anchor=tk.W)
         cmd_text = ScrolledText(cmd_window, height=5, wrap=tk.WORD, autohide=True)
         cmd_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         cmd_text.insert(tk.END, command_str)
@@ -536,8 +589,8 @@ class LlamaServerGUI:
         def copy_command():
             cmd_window.clipboard_clear()
             cmd_window.clipboard_append(command_str)
-            Messagebox.ok("Command copied to clipboard!", "Copied", parent=cmd_window)
-        ttk.Button(cmd_window, text="Copy to Clipboard", command=copy_command).pack(pady=10)
+            Messagebox.ok("命令已复制到剪贴板！", "已复制", parent=cmd_window)
+        ttk.Button(cmd_window, text="复制到剪贴板", command=copy_command).pack(pady=10)
 
     def start_server(self):
         if self.is_running: return
@@ -570,10 +623,10 @@ class LlamaServerGUI:
                 self.root.after(0, self.server_stopped)
                 
             except FileNotFoundError:
-                self.root.after(0, self.update_output, f"\n⚠ Error: 'llama-server' executable not found. Ensure it's in the PATH or same directory.\n")
+                self.root.after(0, self.update_output, "\n⚠ 错误：找不到 llama-server 可执行文件，请确保它在 PATH 或同目录下。\n")
                 self.root.after(0, self.server_stopped)
             except Exception as e:
-                self.root.after(0, self.update_output, f"\n⚠ Error starting server: {e}\n")
+                self.root.after(0, self.update_output, f"\n⚠ 启动服务器错误：{e}\n")
                 self.root.after(0, self.server_stopped)
         
         threading.Thread(target=run_server, daemon=True).start()
@@ -587,16 +640,16 @@ class LlamaServerGUI:
         if self.server_process and self.is_running:
             try:
                 self.server_process.terminate()
-                self.update_output("\n" + "="*80 + "\n⏹️ Server stop requested...\n")
+                self.update_output("\n" + "="*80 + "\n⏹️ 正在停止服务器...\n")
             except Exception as e:
-                self.update_output(f"\n⚠ Error stopping server: {e}\n")
+                self.update_output(f"\n⚠ 停止服务器错误：{e}\n")
 
     def server_stopped(self):
         self.is_running = False
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
         self.browser_button.config(state=tk.DISABLED)
-        self.update_output("⏹️ Server process has terminated.\n")
+        self.update_output("⏹️ 服务器进程已终止。\n")
 
     def update_output(self, text):
         self.output_text.insert(tk.END, text)
@@ -629,8 +682,16 @@ class LlamaServerGUI:
             'reasoning_format': self.reasoning_format.get(), 'ubatch_size': self.ubatch_size.get(),
             'n_predict': self.n_predict.get(), 'ignore_eos': self.ignore_eos.get(),
             'temp': self.temp.get(), 'top_k': self.top_k.get(), 'top_p': self.top_p.get(),
-            'repeat_penalty': self.repeat_penalty.get()
-            , 'cache_type_k': self.cache_type_k.get(), 'cache_type_v': self.cache_type_v.get()
+            'repeat_penalty': self.repeat_penalty.get(),
+            'pooling': self.pooling.get(), 'reranking': self.reranking.get(),
+            'timeout': self.timeout.get(), 'sleep_idle': self.sleep_idle.get(),
+            'cache_prompt': self.cache_prompt.get(),
+            'threads_batch': self.threads_batch.get(),
+            'repeat_last_n': self.repeat_last_n.get(),
+            'presence_penalty': self.presence_penalty.get(), 'frequency_penalty': self.frequency_penalty.get(),
+            'seed': self.seed.get(), 'min_p': self.min_p.get(),
+            'hf_repo': self.hf_repo.get(), 'hf_file': self.hf_file.get(),
+            'cache_type_k': self.cache_type_k.get(), 'cache_type_v': self.cache_type_v.get()
         }
         try:
             # Determine where to save: prefer provided path, otherwise show Save As dialog
@@ -641,9 +702,9 @@ class LlamaServerGUI:
                 os.makedirs(configs_dir, exist_ok=True)
 
                 save_path = filedialog.asksaveasfilename(
-                    title="Save Configuration As",
+                    title="保存配置为",
                     defaultextension='.json',
-                    filetypes=[('JSON files', '*.json'), ('All files', '*.*')],
+                    filetypes=[('JSON 文件', '*.json'), ('所有文件', '*.*')],
                     initialdir=configs_dir,
                     initialfile='config-'
                 )
@@ -661,9 +722,9 @@ class LlamaServerGUI:
 
             # Update current config file pointer
             self.config_file = save_path
-            Messagebox.ok(f"Configuration saved to {save_path}", "Success")
+            Messagebox.ok(f"配置已保存至 {save_path}", "成功")
         except Exception as e:
-            Messagebox.show_error(f"Failed to save configuration: {e}", "Error")
+            Messagebox.show_error(f"保存配置失败： {e}", "错误")
 
     def load_config(self, path=None, browse=False):
         """Load configuration.
@@ -678,8 +739,8 @@ class LlamaServerGUI:
             configs_dir = os.path.join(app_dir, 'configs')
             os.makedirs(configs_dir, exist_ok=True)
             chosen = filedialog.askopenfilename(
-                title="Select Configuration",
-                filetypes=[('JSON files', '*.json'), ('All files', '*.*')],
+                title="选择配置",
+                filetypes=[('JSON 文件', '*.json'), ('所有文件', '*.*')],
                 initialdir=configs_dir
             )
             if not chosen:
@@ -695,7 +756,7 @@ class LlamaServerGUI:
             # If this is the startup default (neither browse nor path provided),
             # silently return so the UI keeps its default values.
             if browse or path:
-                Messagebox.show_warning(f"Config file not found: {load_path}", "Not Found")
+                Messagebox.show_warning(f"未找到配置文件： {load_path}", "未找到")
             return
 
         try:
@@ -748,6 +809,19 @@ class LlamaServerGUI:
             self.top_k.set(config.get('top_k', ''))
             self.top_p.set(config.get('top_p', ''))
             self.repeat_penalty.set(config.get('repeat_penalty', ''))
+            self.cache_prompt.set(config.get('cache_prompt', True))
+            self.reranking.set(config.get('reranking', False))
+            self.pooling.set(config.get('pooling', ''))
+            self.sleep_idle.set(config.get('sleep_idle', ''))
+            self.timeout.set(config.get('timeout', ''))
+            self.threads_batch.set(config.get('threads_batch', ''))
+            self.hf_file.set(config.get('hf_file', ''))
+            self.hf_repo.set(config.get('hf_repo', ''))
+            self.repeat_last_n.set(config.get('repeat_last_n', ''))
+            self.frequency_penalty.set(config.get('frequency_penalty', ''))
+            self.presence_penalty.set(config.get('presence_penalty', ''))
+            self.min_p.set(config.get('min_p', ''))
+            self.seed.set(config.get('seed', ''))
             # Load cache type settings (default: none / empty)
             try:
                 self.cache_type_k.set(config.get('cache_type_k', ''))
@@ -763,7 +837,7 @@ class LlamaServerGUI:
 
             self.update_all_sliders()
         except Exception as e:
-            Messagebox.show_error(f"Failed to load configuration: {e}", "Error")
+            Messagebox.show_error(f"加载配置失败： {e}", "错误")
 
     def open_browser(self):
         host = self.host.get().strip()
@@ -771,9 +845,9 @@ class LlamaServerGUI:
         url = f"http://{host}:{self.port.get().strip()}"
         try:
             webbrowser.open(url)
-            self.update_output(f"🌐 Opened browser at {url}\n")
+            self.update_output(f"🌐 已打开浏览器：{url}\n")
         except Exception as e:
-            Messagebox.show_error(f"Failed to open browser: {e}", "Error")
+            Messagebox.show_error(f"打开浏览器失败： {e}", "错误")
 
         # --- Tray Management ---
     def create_tray_icon(self):
@@ -783,12 +857,12 @@ class LlamaServerGUI:
 
         image = self.load_app_icon()
         menu_items = [
-            item('Show Window', self.show_window, default=True),
-            item('Open Browser', self.open_browser_from_tray, enabled=lambda i: self.is_running),
+            item('显示窗口', self.show_window, default=True),
+            item('打开浏览器', self.open_browser_from_tray, enabled=lambda i: self.is_running),
             pystray.Menu.SEPARATOR,
-            item('Quit Application', self.quit_application),
+            item('退出程序', self.quit_application),
         ]
-        icon = pystray.Icon("llama_server", image, "LLaMA Server", menu=pystray.Menu(*menu_items))
+        icon = pystray.Icon("llama_server", image, "LLaMA 服务器", menu=pystray.Menu(*menu_items))
         return icon
 
     def load_app_icon(self):
