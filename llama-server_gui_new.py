@@ -887,15 +887,19 @@ class LlamaServerGUI:
         if not self._repo_selected_path:
             return
         self.model_path.set(self._repo_selected_path)
-        msg = f"模型路径已设为：\n{self._repo_selected_path}"
-        if self._repo_selected_path:
-            # Also check if there's a mmproj in the same directory
-            repo_dir = os.path.dirname(self._repo_selected_path)
+        
+        # Auto-handle mmproj: clear old one, fill if found in same directory
+        repo_dir = os.path.dirname(self._repo_selected_path)
+        mmproj_found = None
+        if os.path.isdir(repo_dir):
             for f in os.listdir(repo_dir):
                 if f.startswith('mmproj') and f.endswith('.gguf'):
-                    msg += f"\n\n提示：同目录下有 mmproj 文件 ({f})，可点击「加载投影器」一起配置。"
+                    mmproj_found = os.path.join(repo_dir, f)
                     break
-        Messagebox.ok(msg, "已加载", parent=self.root)
+        if mmproj_found:
+            self.mmproj_path.set(mmproj_found)
+        else:
+            self.mmproj_path.set("")
     
     def repo_load_mmproj(self):
         """Load the selected mmproj into the config."""
