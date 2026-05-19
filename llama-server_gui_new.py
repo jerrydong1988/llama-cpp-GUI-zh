@@ -229,13 +229,13 @@ class LlamaServerGUI:
         # Define sections: (iid, text, parent, setup_method, pack_direction)
         self._nav_sections = {}
         sections = [
+            ("repo",      "🏪 模型仓库",       "",              "setup_model_repo_tab",         "grid"),
+            ("engine",    "🖥 引擎管理",       "",              "setup_engine_tab",             "grid"),
             ("models",    "📁 模型与参数",    "",              "setup_model_tab",              "pack"),
             ("gen",       "⚙️ 生成参数",      "",              "setup_generation_tab",         "pack"),
             ("perf",      "🚀 性能",          "",              "setup_performance_core_tab",   "pack"),
             ("advanced",  "🔬 高级",          "",              "setup_performance_advanced_tab","pack"),
             ("api",       "🌐 网络与API",     "",              "setup_server_api_tab",         "grid"),
-            ("repo",      "🏪 模型仓库",       "",              "setup_model_repo_tab",         "grid"),
-            ("engine",    "🖥 引擎管理",       "",              "setup_engine_tab",             "grid"),
             ("output",    "📊 服务器输出",     "",              "setup_output_tab",             "pack"),
         ]
         
@@ -257,8 +257,8 @@ class LlamaServerGUI:
             getattr(self, method)(panel)
         
         # Show first panel by default
-        self.nav_tree.selection_set("models")
-        self._show_panel("models")
+        self.nav_tree.selection_set("repo")
+        self._show_panel("repo")
         
         # ── Bottom: Fixed control bar ──
         bottom_bar = ttk.Frame(self.root, padding="10 10")
