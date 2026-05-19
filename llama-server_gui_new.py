@@ -56,6 +56,16 @@ class LlamaServerGUI:
         
         # Initialize config dropdown
         self._refresh_config_list()
+        
+        # Auto-adjust context slider when model path changes (debounced)
+        self._ctx_slider_timer = None
+        def on_model_path_change(*_):
+            if self._ctx_slider_timer:
+                self.root.after_cancel(self._ctx_slider_timer)
+            self._ctx_slider_timer = self.root.after(500, self._auto_adjust_ctx_slider)
+        self.model_path.trace_add('write', on_model_path_change)
+        # Also trigger on startup (if model already loaded)
+        self.root.after(600, self._auto_adjust_ctx_slider)
 
     def get_config_path(self, filename):
         """Get the path for config file that works with PyInstaller."""
@@ -299,7 +309,7 @@ class LlamaServerGUI:
         core_group = ttk.Labelframe(parent, text="核心性能", padding="10")
         core_group.pack(fill=tk.X, pady=5, side=tk.TOP)
         self.ctx_size = tk.IntVar(value=4096)
-        self.create_slider(core_group, "上下文大小 (-c):", self.ctx_size, "模型的上下文大小（序列长度）。", from_=0, to=131072, resolution=1024, row=0)
+        self.create_slider(core_group, "上下文大小 (-c):", self.ctx_size, "模型的上下文大小（序列长度）。选择模型后自动适配上限。", from_=0, to=524288, resolution=1024, row=0)
         self.ctx_size_auto = tk.BooleanVar(value=False)
         cb = ttk.Checkbutton(core_group, text="自动上下文 (--ctx-size 0)", variable=self.ctx_size_auto, bootstyle="round-toggle")
         cb.grid(row=0, column=2, sticky=tk.W, padx=5, pady=5)
@@ -1748,6 +1758,28 @@ class LlamaServerGUI:
         def show_msg():
             Messagebox.ok(f"草稿模型已下载至：\n{result}\n\n已自动填入「草稿模型路径 (-md)」。\n\n前往「高级 → 推测解码」设置推测解码类型。", "下载完成", parent=self.root)
         self.root.after(100, show_msg)
+
+    def _auto_adjust_ctx_slider(self):
+        """Read model's context length from GGUF header and adjust slider max."""
+        path = self.model_path.get().strip()
+        if not path or not os.path.isfile(path):
+            return
+        meta = self._read_gguf_metadata(path)
+        if not meta:
+            return
+        ctx = meta.get(f"{meta.get('general.architecture', '')}.context_length")
+        if not ctx:
+            ctx = meta.get('general.context_length')
+        if ctx and isinstance(ctx, (int, float)) and ctx > 0:
+            ctx = int(ctx)
+            new_max = max(ctx, 131072)
+            for key, refs in self.slider_refs.items():
+                if '上下文大小' in key:
+                    refs['slider'].configure(to=new_max)
+                    if refs['var'].get() > ctx:
+                        refs['var'].set(ctx)
+                        self.update_slider_label(refs['var'], refs['label'], refs['resolution'])
+                    break
 
     # --- UI Helper Methods ---
     def create_file_entry(self, parent, label_text, string_var, tooltip_text, file_ext, row):
