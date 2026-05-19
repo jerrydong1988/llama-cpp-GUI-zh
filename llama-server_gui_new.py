@@ -40,6 +40,10 @@ class LlamaServerGUI:
 
         # Use user's directory for portable config file
         self.config_file = self.get_config_path("llama_server_config.json")
+        
+        # Theme state
+        self.current_theme = "darkly"
+        self._theme_btn = None  # reference for toggle button
 
         # Store slider references for updating on load
         self.slider_refs = {}
@@ -208,7 +212,14 @@ class LlamaServerGUI:
         header = ttk.Frame(self.root, padding="10 8")
         header.pack(fill=tk.X)
         ttk.Label(header, text="🔧 LLaMA 服务器管理器", font=("", 14, "bold")).pack(side=tk.LEFT)
-        ttk.Label(header, text="v1.3.0", foreground="gray", font=("", 9)).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(header, text="v1.3.1", foreground="gray", font=("", 9)).pack(side=tk.LEFT, padx=(8, 0))
+        
+        # Theme toggle button (right side)
+        theme_frame = ttk.Frame(header)
+        theme_frame.pack(side=tk.RIGHT)
+        self._theme_btn = ttk.Button(theme_frame, text="☀ 明亮", command=self.toggle_theme,
+            bootstyle="secondary-link", takefocus=False)
+        self._theme_btn.pack()
         
         # ── Main: Sidebar + Content ──
         main_frame = ttk.Frame(self.root)
@@ -229,13 +240,13 @@ class LlamaServerGUI:
         # Define sections: (iid, text, parent, setup_method, pack_direction)
         self._nav_sections = {}
         sections = [
+            ("repo",      "🏪 模型仓库",       "",              "setup_model_repo_tab",         "grid"),
+            ("engine",    "🖥 引擎管理",       "",              "setup_engine_tab",             "grid"),
             ("models",    "📁 模型与参数",    "",              "setup_model_tab",              "pack"),
             ("gen",       "⚙️ 生成参数",      "",              "setup_generation_tab",         "pack"),
             ("perf",      "🚀 性能",          "",              "setup_performance_core_tab",   "pack"),
             ("advanced",  "🔬 高级",          "",              "setup_performance_advanced_tab","pack"),
             ("api",       "🌐 网络与API",     "",              "setup_server_api_tab",         "grid"),
-            ("repo",      "🏪 模型仓库",       "",              "setup_model_repo_tab",         "grid"),
-            ("engine",    "🖥 引擎管理",       "",              "setup_engine_tab",             "grid"),
             ("output",    "📊 服务器输出",     "",              "setup_output_tab",             "pack"),
         ]
         
@@ -2602,6 +2613,7 @@ class LlamaServerGUI:
         config['custom_arguments_list'] = self.custom_arguments
         config['ctx_size_auto'] = self.ctx_size_auto.get()
         config['engine_dir'] = self.selected_engine_dir
+        config['theme'] = self.current_theme
         if hasattr(self, 'model_repo_roots'):
             config['model_repo_roots'] = [r for r in self.model_repo_roots if not r.get('builtin')]
         try:
@@ -2677,6 +2689,11 @@ class LlamaServerGUI:
             # ── auto-loaded from _PARAM_DEFS (single source of truth) ──
             self._params_from_dict(config)
             
+            # Restore theme
+            saved_theme = config.get('theme', 'darkly')
+            if saved_theme in ('darkly', 'flatly') and saved_theme != self.current_theme:
+                self.toggle_theme()
+            
             # Non-registered params
             self.ctx_size_auto.set(config.get('ctx_size_auto', False))
             
@@ -2725,6 +2742,15 @@ class LlamaServerGUI:
                 self.scan_engines()
         except Exception as e:
             Messagebox.show_error(f"加载配置失败： {e}", "错误")
+    
+    def toggle_theme(self):
+        """Toggle between darkly (dark) and flatly (light) themes."""
+        new_theme = "flatly" if self.current_theme == "darkly" else "darkly"
+        self.root.style.theme_use(new_theme)
+        self.current_theme = new_theme
+        self._theme_btn.config(
+            text="🌙 暗色" if new_theme == "flatly" else "☀ 明亮"
+        )
     
     # --- 配置管理 (Named Configs) ---
     def _get_configs_dir(self):
