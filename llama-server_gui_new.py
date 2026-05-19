@@ -2604,6 +2604,9 @@ class LlamaServerGUI:
             # Refresh model repo tree (custom roots may have changed)
             if hasattr(self, 'scan_downloaded_models'):
                 self.scan_downloaded_models()
+            # Refresh engine list to show correct default engine marker
+            if hasattr(self, 'scan_engines'):
+                self.scan_engines()
         except Exception as e:
             Messagebox.show_error(f"加载配置失败： {e}", "错误")
     
