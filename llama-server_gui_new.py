@@ -91,6 +91,7 @@ class LlamaServerGUI:
 
         # --- Create Tab Frames ---
         model_frame = ttk.Frame(notebook, padding="10")
+        repo_frame = ttk.Frame(notebook, padding="10")
         generation_frame = ttk.Frame(notebook, padding="10")
         performance_core_frame = ttk.Frame(notebook, padding="10")
         performance_advanced_frame = ttk.Frame(notebook, padding="10")
@@ -98,6 +99,7 @@ class LlamaServerGUI:
         output_frame = ttk.Frame(notebook, padding="10")
 
         notebook.add(model_frame, text="  模型  ")
+        notebook.add(repo_frame, text="  模型仓库  ")
         notebook.add(generation_frame, text="  生成参数  ")
         notebook.add(performance_core_frame, text="  性能  ")
         notebook.add(performance_advanced_frame, text="  高级  ")
@@ -106,6 +108,7 @@ class LlamaServerGUI:
 
         # --- Populate Tabs ---
         self.setup_model_tab(model_frame)
+        self.setup_model_repo_tab(repo_frame)
         self.setup_generation_tab(generation_frame)
         self.setup_performance_core_tab(performance_core_frame)
         self.setup_performance_advanced_tab(performance_advanced_frame)
@@ -406,6 +409,281 @@ class LlamaServerGUI:
         clear_btn = ttk.Button(parent, text="清空输出", command=self.clear_output, bootstyle="secondary-outline")
         clear_btn.pack(pady=(10, 0), anchor=tk.E)
         ToolTip(clear_btn, "清除日志输出窗口中的所有文本。")
+
+    # --- 模型仓库 (Model Repository) Tab ---
+    def setup_model_repo_tab(self, parent):
+        """Model repository tab - browse and manage downloaded models."""
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(0, weight=1)
+        
+        # Main container with left tree and right detail
+        main_frame = ttk.Frame(parent)
+        main_frame.grid(row=0, column=0, sticky=tk.NSEW)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.columnconfigure(1, weight=0)
+        main_frame.rowconfigure(0, weight=1)
+        
+        # === Left: TreeView ===
+        tree_container = ttk.Frame(main_frame)
+        tree_container.grid(row=0, column=0, sticky=tk.NSEW, padx=(0, 5))
+        tree_container.rowconfigure(0, weight=0)
+        tree_container.rowconfigure(1, weight=1)
+        tree_container.columnconfigure(0, weight=1)
+        
+        # Refresh button
+        self.repo_refresh_btn = ttk.Button(tree_container, text="🔄 刷新", 
+            command=self.scan_downloaded_models, bootstyle="primary-outline")
+        self.repo_refresh_btn.grid(row=0, column=0, sticky=tk.W, pady=(0, 5))
+        
+        # Treeview frame
+        tree_frame = ttk.Frame(tree_container)
+        tree_frame.grid(row=1, column=0, sticky=tk.NSEW)
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
+        
+        self.repo_tree = ttk.Treeview(tree_frame, columns=('size', 'filetype', 'fullpath'),
+            show='tree', selectmode='browse', height=12)
+        self.repo_tree.heading('#0', text='模型文件')
+        self.repo_tree.column('#0', width=400, minwidth=300)
+        
+        tree_scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.repo_tree.yview)
+        self.repo_tree.configure(yscrollcommand=tree_scroll.set)
+        
+        self.repo_tree.grid(row=0, column=0, sticky=tk.NSEW)
+        tree_scroll.grid(row=0, column=1, sticky=tk.NS)
+        self.repo_tree.bind('<<TreeviewSelect>>', self.on_repo_tree_select)
+        
+        # === Right: Detail Panel ===
+        detail_container = ttk.Frame(main_frame, width=280)
+        detail_container.grid(row=0, column=1, sticky=tk.NSEW, padx=(5, 0))
+        detail_container.grid_propagate(False)
+        
+        # Model detail display
+        detail_group = ttk.Labelframe(detail_container, text="模型详情", padding="8")
+        detail_group.pack(fill=tk.X, pady=(0, 10))
+        
+        self.repo_info_vars = {}
+        info_fields = [
+            ('文件名', 'name', ''),
+            ('大小', 'size', ''),
+            ('类型', 'type', ''),
+            ('路径', 'path', ''),
+        ]
+        for label, key, default in info_fields:
+            row = ttk.Frame(detail_group)
+            row.pack(fill=tk.X, pady=2)
+            ttk.Label(row, text=f"{label}：", width=6, anchor=tk.E).pack(side=tk.LEFT)
+            var = tk.StringVar(value=default)
+            lbl = ttk.Label(row, textvariable=var, anchor=tk.W, wraplength=200)
+            lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self.repo_info_vars[key] = var
+        
+        # Action buttons
+        action_group = ttk.Labelframe(detail_container, text="操作", padding="8")
+        action_group.pack(fill=tk.X)
+        
+        self.repo_load_btn = ttk.Button(action_group, text="📥 加载模型", 
+            command=self.repo_load_model, state=tk.DISABLED, bootstyle="success")
+        self.repo_load_btn.pack(fill=tk.X, pady=2)
+        ToolTip(self.repo_load_btn, "将选中的模型填入主配置的模型路径。")
+        
+        self.repo_load_mmproj_btn = ttk.Button(action_group, text="📷 加载投影器", 
+            command=self.repo_load_mmproj, state=tk.DISABLED, bootstyle="info")
+        self.repo_load_mmproj_btn.pack(fill=tk.X, pady=2)
+        ToolTip(self.repo_load_mmproj_btn, "将选中的 mmproj 文件填入多模态投影器路径。")
+        
+        self.repo_delete_btn = ttk.Button(action_group, text="🗑 删除文件", 
+            command=self.repo_delete_file, state=tk.DISABLED, bootstyle="danger-outline")
+        self.repo_delete_btn.pack(fill=tk.X, pady=2)
+        ToolTip(self.repo_delete_btn, "从磁盘删除选中的模型文件。")
+        
+        self.repo_open_btn = ttk.Button(action_group, text="📂 打开目录", 
+            command=self.repo_open_folder, state=tk.DISABLED, bootstyle="secondary-outline")
+        self.repo_open_btn.pack(fill=tk.X, pady=2)
+        ToolTip(self.repo_open_btn, "在资源管理器中打开文件所在目录。")
+        
+        # Store file info per tree item
+        self.repo_tree_items = {}  # iid -> {name, path, type, size}
+        self._repo_selected_path = None  # full path of currently selected file
+        
+        # Auto-scan on first load
+        self.root.after(100, self.scan_downloaded_models)
+    
+    def scan_downloaded_models(self):
+        """Scan the models/ directory and populate the tree."""
+        # Clear tree
+        for item in self.repo_tree.get_children():
+            self.repo_tree.delete(item)
+        self.repo_tree_items.clear()
+        self._clear_repo_detail()
+        
+        app_dir = os.path.dirname(self.get_config_path(''))
+        models_dir = os.path.join(app_dir, 'models')
+        
+        if not os.path.isdir(models_dir):
+            self.repo_tree.insert('', tk.END, text='⚠ 尚未下载任何模型', iid='_empty')
+            return
+        
+        # Scan repos
+        repo_dirs = sorted([d for d in os.listdir(models_dir) 
+            if os.path.isdir(os.path.join(models_dir, d))])
+        
+        found_any = False
+        for repo_name in repo_dirs:
+            repo_path = os.path.join(models_dir, repo_name)
+            
+            # Check if this repo has subdirectories (namespace/repo pattern)
+            sub_items = os.listdir(repo_path)
+            if any(os.path.isdir(os.path.join(repo_path, s)) for s in sub_items):
+                # Deep structure: namespace/repo_name/file
+                for sub_name in sorted(sub_items):
+                    sub_path = os.path.join(repo_path, sub_name)
+                    if os.path.isdir(sub_path):
+                        self._add_repo_to_tree(repo_name + '/' + sub_name, sub_path)
+            else:
+                # Flat structure: repo_name/file
+                self._add_repo_to_tree(repo_name, repo_path)
+        
+        if not found_any and not self.repo_tree.get_children():
+            self.repo_tree.insert('', tk.END, text='📭 仓库为空', iid='_empty')
+    
+    def _add_repo_to_tree(self, display_name, repo_path):
+        """Add a repo and its files to the tree."""
+        repo_iid = f"repo_{display_name}"
+        self.repo_tree.insert('', tk.END, text=f"📁 {display_name}", 
+            iid=repo_iid, open=False)
+        
+        files_added = 0
+        for fname in sorted(os.listdir(repo_path)):
+            fpath = os.path.join(repo_path, fname)
+            if not os.path.isfile(fpath):
+                continue
+            if not (fname.endswith('.gguf') or fname.endswith('.gguf_file') or fname.endswith('.txt')):
+                continue
+            
+            size = os.path.getsize(fpath)
+            size_str = self._format_size(size)
+            
+            is_mmproj = fname.startswith('mmproj')
+            is_imatrix = 'imatrix' in fname.lower()
+            icon = "📷" if is_mmproj else ("📊" if is_imatrix else "📄")
+            ftype = "mmproj" if is_mmproj else ("imatrix" if is_imatrix else "model")
+            
+            file_iid = f"file_{display_name}_{fname}"
+            self.repo_tree.insert(repo_iid, tk.END, 
+                text=f"{icon}  {size_str:>9s}  {fname}",
+                iid=file_iid)
+            self.repo_tree_items[file_iid] = {
+                'name': fname,
+                'path': fpath,
+                'size': size,
+                'type': ftype
+            }
+            files_added += 1
+        
+        if files_added == 0:
+            self.repo_tree.delete(repo_iid)
+        
+        return files_added > 0
+    
+    def on_repo_tree_select(self, event):
+        """Handle tree selection change."""
+        selection = self.repo_tree.selection()
+        if not selection:
+            self._clear_repo_detail()
+            return
+        
+        iid = selection[0]
+        item_info = self.repo_tree_items.get(iid)
+        
+        if not item_info:
+            # It's a folder/repo, not a file
+            self._clear_repo_detail()
+            return
+        
+        self._repo_selected_path = item_info['path']
+        
+        # Update detail panel
+        self.repo_info_vars['name'].set(item_info['name'])
+        self.repo_info_vars['size'].set(self._format_size(item_info['size']))
+        
+        ftype = item_info['type']
+        if ftype == 'mmproj':
+            type_display = "📷 多模态投影器"
+        elif ftype == 'imatrix':
+            type_display = "📊 重要性矩阵"
+        else:
+            type_display = "📄 主模型"
+        self.repo_info_vars['type'].set(type_display)
+        self.repo_info_vars['path'].set(item_info['path'])
+        
+        # Enable/disable buttons based on type
+        self.repo_load_btn.config(state=tk.NORMAL if ftype == 'model' else tk.DISABLED)
+        self.repo_load_mmproj_btn.config(state=tk.NORMAL if ftype == 'mmproj' else tk.DISABLED)
+        self.repo_delete_btn.config(state=tk.NORMAL)
+        self.repo_open_btn.config(state=tk.NORMAL)
+    
+    def _clear_repo_detail(self):
+        """Clear the detail panel."""
+        self._repo_selected_path = None
+        for key, var in self.repo_info_vars.items():
+            var.set('')
+        self.repo_load_btn.config(state=tk.DISABLED)
+        self.repo_load_mmproj_btn.config(state=tk.DISABLED)
+        self.repo_delete_btn.config(state=tk.DISABLED)
+        self.repo_open_btn.config(state=tk.DISABLED)
+    
+    def repo_load_model(self):
+        """Load the selected model into the main config."""
+        if not self._repo_selected_path:
+            return
+        self.model_path.set(self._repo_selected_path)
+        msg = f"模型路径已设为：\n{self._repo_selected_path}"
+        if self._repo_selected_path:
+            # Also check if there's a mmproj in the same directory
+            repo_dir = os.path.dirname(self._repo_selected_path)
+            for f in os.listdir(repo_dir):
+                if f.startswith('mmproj') and f.endswith('.gguf'):
+                    msg += f"\n\n提示：同目录下有 mmproj 文件 ({f})，可点击「加载投影器」一起配置。"
+                    break
+        Messagebox.ok(msg, "已加载", parent=self.root)
+    
+    def repo_load_mmproj(self):
+        """Load the selected mmproj into the config."""
+        if not self._repo_selected_path:
+            return
+        self.mmproj_path.set(self._repo_selected_path)
+        Messagebox.ok(f"多模态投影器路径已设为：\n{self._repo_selected_path}", "已加载", parent=self.root)
+    
+    def repo_delete_file(self):
+        """Delete the selected file from disk."""
+        if not self._repo_selected_path:
+            return
+        fname = os.path.basename(self._repo_selected_path)
+        reply = Messagebox.yesno(
+            f"确定要删除 {fname}？\n此操作不可撤销！",
+            "确认删除",
+            parent=self.root
+        )
+        if not reply:
+            return
+        
+        try:
+            os.remove(self._repo_selected_path)
+            Messagebox.ok(f"已删除：{fname}", "删除成功", parent=self.root)
+            self.scan_downloaded_models()  # Refresh tree
+        except Exception as e:
+            Messagebox.show_error(f"删除失败：{e}", "错误", parent=self.root)
+    
+    def repo_open_folder(self):
+        """Open the file's directory in file explorer."""
+        if not self._repo_selected_path:
+            return
+        folder = os.path.dirname(self._repo_selected_path)
+        try:
+            os.startfile(folder)
+        except Exception as e:
+            Messagebox.show_error(f"打开目录失败：{e}", "错误", parent=self.root)
 
     # --- ModelScope Download Methods ---
     def _ms_get_repo_dir(self):
