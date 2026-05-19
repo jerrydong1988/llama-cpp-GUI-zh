@@ -981,7 +981,7 @@ class LlamaServerGUI:
         self.engine_tree.heading('#0', text='已安装引擎')
         self.engine_tree.column('#0', width=400, minwidth=300)
         # Tag for default engine highlight
-        self.engine_tree.tag_configure('default', background='#FFF3CD', foreground='#856404')
+        self.engine_tree.tag_configure('default', background='#FFE4B5', foreground='#8B4513', font=('TkDefaultFont', 9, 'bold'))
         
         engine_scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.engine_tree.yview)
         self.engine_tree.configure(yscrollcommand=engine_scroll.set)
@@ -1084,8 +1084,9 @@ class LlamaServerGUI:
             is_default = (os.path.normcase(eng['dir']) == os.path.normcase(self.selected_engine_dir))
             marker = "⭐ " if is_default else "  "
             icon = "🖥" if 'ROCm' in eng.get('version', '') or 'hip' in eng.get('name', '').lower() else "⚡"
+            label = f"{eng['name']}  [默认]" if is_default else eng['name']
             iid = self.engine_tree.insert('', tk.END, 
-                text=f"{marker}{icon}  {eng['name']}",
+                text=f"{marker}{icon}  {label}",
                 iid=eng['name'],
                 tags=('default',) if is_default else ())
             self.engine_tree_items[eng['name']] = eng
@@ -1191,8 +1192,9 @@ class LlamaServerGUI:
             is_default = os.path.normcase(e['dir']) == os.path.normcase(self.selected_engine_dir)
             marker = "⭐ " if is_default else "  "
             icon = "🖥" if 'ROCm' in e.get('version', '') or 'hip' in e.get('name', '').lower() else "⚡"
+            label = f"{e['name']}  [默认]" if is_default else e['name']
             self.engine_tree.item(child,
-                text=f"{marker}{icon}  {e['name']}",
+                text=f"{marker}{icon}  {label}",
                 tags=('default',) if is_default else ())
         
         self.engine_status_var.set(f"✅ 默认引擎：{eng['name']}")
