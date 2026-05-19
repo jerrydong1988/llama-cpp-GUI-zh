@@ -2178,6 +2178,7 @@ class LlamaServerGUI:
             'mlock': self.mlock.get(), 'no_mmap': self.no_mmap.get(), 'numa': self.numa.get(),
             'moe_cpu_layers': self.moe_cpu_layers.get(), 'draft_model_path': self.draft_model_path.get(),
             'draft_gpu_layers': self.draft_gpu_layers.get(), 'draft_tokens': self.draft_tokens.get(),
+            'spec_type': self.spec_type.get(), 'spec_draft_n_min': self.spec_draft_n_min.get(),
             'host': self.host.get(), 'port': self.port.get(), 'api_key': self.api_key.get(),
             'no_webui': self.no_webui.get(), 'embedding': self.embedding.get(),
             'verbose': self.verbose.get(), 'custom_arguments_list': self.custom_arguments,
@@ -2290,6 +2291,8 @@ class LlamaServerGUI:
             self.draft_model_path.set(config.get('draft_model_path', ''))
             self.draft_gpu_layers.set(config.get('draft_gpu_layers', ''))
             self.draft_tokens.set(config.get('draft_tokens', ''))
+            self.spec_type.set(config.get('spec_type', ''))
+            self.spec_draft_n_min.set(config.get('spec_draft_n_min', ''))
             self.host.set(config.get('host', '127.0.0.1'))
             self.port.set(config.get('port', '8080'))
             self.api_key.set(config.get('api_key', ''))
