@@ -1,5 +1,7 @@
 # LLaMA 服务器管理器（中文版）
 
+> [🇺🇸 English](README-en.md)
+
 > 基于 [yossifibrahem/llama-cpp-GUI](https://github.com/yossifibrahem/llama-cpp-GUI) 深度二次开发 — 图形化管理 llama.cpp 服务器，简化llama.cpp的命令操作。感谢yossifibrahem开源了本项目，同时中文版改进工作主要贡献是Hermes Agent及背后的Deepseek v4 Flash模型，本人只提供了想法，具体实现由Hermes Agent及背后的Deepseek v4 Flash模型完成。
 
 一个功能完整的图形界面程序，用于管理 `llama-server` 全生命周期：**下载模型 → 选择引擎 → 配置参数 → 启动监控**。告别复杂的命令行参数。
