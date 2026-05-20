@@ -25,7 +25,7 @@ except ImportError:
     TRAY_AVAILABLE = False
 
 # Application version
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 class LlamaServerGUI:
     def __init__(self, root):
@@ -155,7 +155,7 @@ class LlamaServerGUI:
         ("api_key",       "api_key",       "--api-key",  "str",  ""),
         ("ssl_key_file",  "ssl_key_file",  "--ssl-key-file","str",""),
         ("ssl_cert_file", "ssl_cert_file", "--ssl-cert-file","str",""),
-        ("no_webui",      "no_webui",      "--no-webui", "bool", False),
+        ("no_webui",      "no_webui",      "--no-ui",    "bool", False),
         ("embedding",     "embedding",     "--embedding","bool", False),
         ("pooling",       "pooling",       "--pooling",  "str",  ""),
         ("reranking",     "reranking",     "--reranking","bool", False),
@@ -321,7 +321,7 @@ class LlamaServerGUI:
             font=("", 9), foreground="gray")
         self.server_status_label.pack(side=tk.LEFT, padx=(0, 8))
         self.browser_button = self.create_button(right_grp, "打开浏览器 🌐", self.open_browser,
-            "打开服务器 Web 界面。", state=tk.DISABLED, bootstyle="primary-outline")
+            "打开服务器 API 页面。新版 llama.cpp 已无内置聊天界面，推荐使用外部客户端连接。", state=tk.DISABLED, bootstyle="primary-outline")
         self.stop_button = self.create_button(right_grp, "停止 ⏹", self.stop_server,
             "停止服务器。", state=tk.DISABLED, bootstyle="danger")
         self.start_button = self.create_button(right_grp, "▶ 启动服务器", self.start_server,
@@ -595,8 +595,8 @@ class LlamaServerGUI:
         self.spec_draft_n_min = tk.StringVar(value="")
         self.create_spinbox(spec_group, "最小草稿令牌数 (--spec-draft-n-min):", self.spec_draft_n_min, "推测解码最小草稿令牌数（默认 0）。", row=3, from_=0, to=512, increment=1)
         self.spec_type = tk.StringVar()
-        spec_types = ["", "none", "mtp", "ngram-cache", "ngram-simple", "ngram-map-k", "ngram-map-k4v", "ngram-mod", "draft-simple", "draft-eagle3", "draft-mtp"]
-        self.create_combobox(spec_group, "推测解码类型 (--spec-type):", self.spec_type, "推测解码类型。无草稿模型时（模型自带MTP头）可选：mtp / ngram-cache / ngram-mod 等；有草稿模型时（-md 指定）可选：draft-simple / draft-eagle3 / draft-mtp。可组合多个，用逗号分隔。", spec_types, row=4)
+        spec_types = ["", "none", "draft-mtp", "draft-simple", "draft-eagle3", "ngram-cache", "ngram-simple", "ngram-map-k", "ngram-map-k4v", "ngram-mod"]
+        self.create_combobox(spec_group, "推测解码类型 (--spec-type):", self.spec_type, "推测解码类型。无草稿模型时（模型自带MTP头）可选：none / ngram-cache / ngram-mod 等；有草稿模型时（-md 指定）可选：draft-mtp / draft-simple / draft-eagle3。可组合多个，用逗号分隔。", spec_types, row=4)
         # (草稿模型下载已整合到「模型」标签页的 ModelScope 区域)
         # --- Server Reliability ---
         server_rel_group = ttk.Labelframe(parent, text="服务器可靠性", padding="10")
@@ -634,7 +634,7 @@ class LlamaServerGUI:
         self.api_key = tk.StringVar()
         self.create_entry(access_group, "API 密钥 (--api-key):", self.api_key, "API 密钥，用于令牌认证（可选）。", row=0)
         self.no_webui = tk.BooleanVar(value=False)
-        self.create_checkbutton(access_group, "禁用网页界面 (--no-webui)", self.no_webui, "禁用内置网页界面。", row=1)
+        self.create_checkbutton(access_group, "禁用内置 UI (--no-ui)", self.no_webui, "新版 llama.cpp 已无内置 Web 界面，此选项仅控制服务端 UI 配置。需要通过外部客户端（如 Open WebUI）连接。", row=1)
         self.embedding = tk.BooleanVar(value=False)
         self.create_checkbutton(access_group, "仅嵌入模式 (--embedding)", self.embedding, "启用仅嵌入模式（禁用聊天功能）。", row=2)
         self.pooling = tk.StringVar()
@@ -1337,18 +1337,22 @@ class LlamaServerGUI:
                     engines.append(eng_info)
                     seen_dirs.add(os.path.normcase(eng_dir))
         
-        # 2. Scan NovaMax engine directory if it exists
-        novamax_engines = os.path.join('C:\\LingLong\\NovaStudio\\NovaMax', 'external', 'llamacpp')
-        if os.path.isdir(novamax_engines):
-            for entry in sorted(os.listdir(novamax_engines)):
-                eng_dir = os.path.join(novamax_engines, entry)
+        # 2. Include all config-saved custom engine directories (multi-engine support)
+        custom_dirs = []
+        if self.selected_engine_dir:
+            custom_dirs.append(self.selected_engine_dir)
+        for d in getattr(self, '_custom_engine_dirs', []):
+            if os.path.normcase(d) not in [os.path.normcase(c) for c in custom_dirs]:
+                custom_dirs.append(d)
+        for eng_dir in custom_dirs:
+            norm = os.path.normcase(eng_dir)
+            if norm not in seen_dirs:
                 exe_path = os.path.join(eng_dir, 'llama-server.exe')
-                if os.path.isdir(eng_dir) and os.path.isfile(exe_path):
-                    norm = os.path.normcase(eng_dir)
-                    if norm not in seen_dirs:
-                        eng_info = self._get_engine_info(entry, eng_dir, exe_path, 'NovaMax')
-                        engines.append(eng_info)
-                        seen_dirs.add(norm)
+                if os.path.isfile(exe_path):
+                    name = os.path.basename(eng_dir.rstrip('/\\'))
+                    eng_info = self._get_engine_info(name, eng_dir, exe_path, '自定义')
+                    engines.append(eng_info)
+                    seen_dirs.add(norm)
         
         self.engine_dirs = engines
         
@@ -1444,6 +1448,20 @@ class LlamaServerGUI:
         eng = self.engine_tree_items.get(iid)
         if eng:
             self._show_engine_detail(eng)
+            # Auto-select as default engine on click (replaces need for explicit "设为默认")
+            if os.path.normcase(eng['dir']) != os.path.normcase(self.selected_engine_dir):
+                self.selected_engine_dir = eng['dir']
+                # Update tree markers to reflect new default
+                for child in self.engine_tree.get_children():
+                    e = self.engine_tree_items.get(child)
+                    if not e:
+                        continue
+                    is_default = os.path.normcase(e['dir']) == os.path.normcase(self.selected_engine_dir)
+                    marker = "⭐ " if is_default else "  "
+                    icon = "🖥" if 'ROCm' in e.get('version', '') or 'hip' in e.get('name', '').lower() else "⚡"
+                    label = f"{e['name']}  [默认]" if is_default else e['name']
+                    self.engine_tree.item(child, text=f"{marker}{icon}  {label}",
+                        tags=('default',) if is_default else ())
     
     def engine_set_default(self):
         """Set the selected engine as default."""
@@ -2704,6 +2722,11 @@ class LlamaServerGUI:
         config['custom_arguments_list'] = self.custom_arguments
         config['ctx_size_auto'] = self.ctx_size_auto.get()
         config['engine_dir'] = self.selected_engine_dir
+        # Save all custom engine directories for multi-engine support
+        config['engine_dirs_list'] = [
+            eng['dir'] for eng in getattr(self, 'engine_dirs', [])
+            if eng.get('source') == '自定义'
+        ]
         config['theme'] = self.current_theme
         config['ms_download_root'] = self.ms_download_root
         if hasattr(self, 'model_repo_roots'):
@@ -2818,6 +2841,20 @@ class LlamaServerGUI:
             eng_dir = config.get('engine_dir', '')
             if eng_dir and os.path.isdir(eng_dir) and os.path.isfile(os.path.join(eng_dir, 'llama-server.exe')):
                 self.selected_engine_dir = eng_dir
+            
+            # Restore all custom engine directories (multi-engine support)
+            saved_custom = config.get('engine_dirs_list', [])
+            self._custom_engine_dirs = [
+                d for d in saved_custom
+                if os.path.isdir(d) and os.path.isfile(os.path.join(d, 'llama-server.exe'))
+            ]
+            # Ensure selected_engine_dir is also in the custom list if it's a custom engine
+            if self.selected_engine_dir and os.path.normcase(self.selected_engine_dir) not in [
+                os.path.normcase(d) for d in self._custom_engine_dirs
+            ]:
+                exe_path = os.path.join(self.selected_engine_dir, 'llama-server.exe')
+                if os.path.isfile(exe_path):
+                    self._custom_engine_dirs.append(self.selected_engine_dir)
             
             # Restore custom model repo roots (replace, don't append to previous config's roots)
             saved_roots = config.get('model_repo_roots', [])
