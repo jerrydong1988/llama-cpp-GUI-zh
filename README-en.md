@@ -1,7 +1,9 @@
 # LLaMA Server Manager (English)
 
 > [🇨🇳 中文](README.md)
-
+>
+> ⚠️ **v1.5.0 Breaking Change**: Only supports the latest llama.cpp (≥ commit b39a7bf). `--spec-type` value `mtp` replaced with `draft-mtp`, built-in Web UI removed. For old engines, use v1.4.0 or earlier.
+>
 > Fork of [yossifibrahem/llama-cpp-GUI](https://github.com/yossifibrahem/llama-cpp-GUI) with deep customization — graphical management for llama.cpp servers, gradually replacing NovaMax
 
 A full-featured GUI application to manage the complete `llama-server` lifecycle: **Download model → Select engine → Configure parameters → Start & monitor**. No more complex command-line arguments.
@@ -13,7 +15,7 @@ A full-featured GUI application to manage the complete `llama-server` lifecycle:
 | Tab | Function |
 |-----|----------|
 | 🏪 **Model Repository** | Download models (ModelScope), browse downloaded models, multi-directory scanning (LM Studio / NovaMax) |
-| 🖥 **Engine** | Manage multiple llama.cpp engine versions, switch default engine (auto-discover NovaMax engines) |
+| 🖥 **Engine** | Manage multiple llama.cpp engine versions, multi-engine directory persistence |
 | 📁 **Model** | Model path, LoRA, multimodal projector, chat template, reasoning toggle |
 | ⚙️ **Generation** | Temperature, Top-K/P, repetition penalty, and advanced sampling parameters |
 | 🚀 **Performance** | Context size, GPU layers, batch processing |
@@ -43,7 +45,7 @@ A full-featured GUI application to manage the complete `llama-server` lifecycle:
 
 ### 🖥 Engine Management
 - **Multi-engine switching**: Browse installed llama.cpp engines, select default
-- **Auto-discovery**: Automatically scan `engines/` directory and NovaMax engine directories
+- **Auto-discovery**: Automatically scan `engines/` directory, custom engine directories persisted across restarts
 - **Backend detection**: Auto-identify ROCm / Vulkan backend types
 - **Custom directories**: Add any directory containing `llama-server.exe`
 
@@ -52,10 +54,10 @@ A full-featured GUI application to manage the complete `llama-server` lifecycle:
 - **Health check**: Auto-ping `/health` endpoint after startup, real-time response time display
 - **Status monitoring**: Running / Disconnected indicators
 - **Real-time logs**: Live server output monitoring
-- **Browser integration**: One-click open Web UI
+- **API access**: One-click open API URL (new llama.cpp has no built-in Web UI; use an external client)
 
 ### 🎛 Configuration Management
-- **Named configs**: Save multiple named configs (e.g. `mtp_qwen`, `draft_gemma`), quick-switch from dropdown
+- **Named configs**: Save multiple named configs (e.g. `draft_qwen`, `draft_gemma`), quick-switch from dropdown
 - **Auto-load**: Config switch restores all parameters + model repo directories
 - **JSON persistence**: Configs stored in `configs/` directory, shareable and backupable
 - **Custom parameters**: Support for extra llama-server parameters not covered by the GUI
@@ -113,7 +115,7 @@ This repository is a deep customization of [yossifibrahem/llama-cpp-GUI](https:/
 |---------|----------|-----------|
 | Model Download | ❌ | ✅ ModelScope (main + draft models) |
 | Model Repository | ❌ | ✅ Multi-directory + metadata + load/delete |
-| Engine Management | ❌ | ✅ Multi-version + NovaMax auto-discovery |
+| Engine Management | ❌ | ✅ Multi-version + multi-engine directory persistence |
 | Named Configs | ❌ | ✅ Quick-switch dropdown |
 | Health Check | ❌ | ✅ Auto-ping + response time |
 | GGUF Parsing | ❌ | ✅ Architecture/context/quantization display |
