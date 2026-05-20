@@ -25,7 +25,7 @@ except ImportError:
     TRAY_AVAILABLE = False
 
 # Application version
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 
 class LlamaServerGUI:
     def __init__(self, root):
@@ -155,7 +155,7 @@ class LlamaServerGUI:
         ("api_key",       "api_key",       "--api-key",  "str",  ""),
         ("ssl_key_file",  "ssl_key_file",  "--ssl-key-file","str",""),
         ("ssl_cert_file", "ssl_cert_file", "--ssl-cert-file","str",""),
-        ("no_webui",      "no_webui",      "--no-ui",    "bool", False),
+        ("ui",            "ui",            "--ui",       "bool", False),
         ("embedding",     "embedding",     "--embedding","bool", False),
         ("pooling",       "pooling",       "--pooling",  "str",  ""),
         ("reranking",     "reranking",     "--reranking","bool", False),
@@ -390,8 +390,12 @@ class LlamaServerGUI:
 
     def setup_generation_tab(self, parent):
         """Configures the 'Generation' tab for sampling and output control."""
+        # Scrollable wrapper to prevent bottom bar being pushed off-screen
+        sf = ScrolledFrame(parent, autohide=True)
+        sf.pack(fill=tk.BOTH, expand=True)
+        
         # --- Output Control ---
-        output_group = ttk.Labelframe(parent, text="输出控制", padding="10")
+        output_group = ttk.Labelframe(sf, text="输出控制", padding="10")
         output_group.pack(fill=tk.X, pady=5, side=tk.TOP)
         
         self.n_predict = tk.StringVar(value="")
@@ -403,48 +407,55 @@ class LlamaServerGUI:
         self.create_entry(output_group, "JSON 约束 (--json-schema):", self.json_schema, "JSON Schema 约束，限制输出为合法 JSON 格式。", row=2)
         
         # --- Sampling Parameters ---
-        sampling_group = ttk.Labelframe(parent, text="采样参数", padding="10")
+        sampling_group = ttk.Labelframe(sf, text="采样参数", padding="10")
         sampling_group.pack(fill=tk.X, pady=5)
         
+        # Side-by-side layout: basic params on left, advanced on right
+        left_frame = ttk.Frame(sampling_group)
+        right_frame = ttk.Frame(sampling_group)
+        left_frame.grid(row=0, column=0, sticky=tk.NSEW)
+        right_frame.grid(row=0, column=1, sticky=tk.NSEW, padx=(10, 0))
+        sampling_group.columnconfigure(0, weight=1)
+        sampling_group.columnconfigure(1, weight=1)
+        
         self.temp = tk.StringVar(value="")
-        self.create_spinbox(sampling_group, "温度 (--temp):", self.temp, "创造力级别（默认 0.8）。越低越确定，越高越有创造力。", from_=0, to=2, increment=0.1, row=0)
+        self.create_spinbox(left_frame, "温度 (--temp):", self.temp, "创造力级别（默认 0.8）。越低越确定，越高越有创造力。", from_=0, to=2, increment=0.1, row=0)
 
         self.top_k = tk.StringVar(value="")
-        self.create_spinbox(sampling_group, "Top-K (--top-k):", self.top_k, "采样时仅保留 top-k 个令牌（默认 40）。", from_=0, to=1000, increment=1, row=1)
+        self.create_spinbox(left_frame, "Top-K (--top-k):", self.top_k, "采样时仅保留 top-k 个令牌（默认 40）。", from_=0, to=1000, increment=1, row=1)
         
         self.top_p = tk.StringVar(value="")
-        self.create_spinbox(sampling_group, "Top-P (--top-p):", self.top_p, "核采样（默认 0.9）。", from_=0, to=1, increment=0.1, row=2)
+        self.create_spinbox(left_frame, "Top-P (--top-p):", self.top_p, "核采样（默认 0.9）。", from_=0, to=1, increment=0.1, row=2)
 
         self.repeat_penalty = tk.StringVar(value="")
-        self.create_spinbox(sampling_group, "重复惩罚 (--repeat-penalty):", self.repeat_penalty, "重复惩罚（默认 1.0）。增加以减少重复循环。", from_=0, to=2, increment=0.1, row=3)
+        self.create_spinbox(left_frame, "重复惩罚 (--repeat-penalty):", self.repeat_penalty, "重复惩罚（默认 1.0）。增加以减少重复循环。", from_=0, to=2, increment=0.1, row=3)
         self.seed = tk.StringVar(value="")
-        self.create_spinbox(sampling_group, "随机种子 (--seed):", self.seed, "RNG 种子（默认 -1 = 随机）。设为固定值可重现结果。", from_=-1, to=2147483647, increment=1, row=4)
+        self.create_spinbox(left_frame, "随机种子 (--seed):", self.seed, "RNG 种子（默认 -1 = 随机）。设为固定值可重现结果。", from_=-1, to=2147483647, increment=1, row=4)
         self.min_p = tk.StringVar(value="")
-        self.create_spinbox(sampling_group, "Min-P (--min-p):", self.min_p, "最小概率采样（默认 0.05，0.0 = 禁用）。比 top-p 更新更好的采样方式。", from_=0, to=1, increment=0.05, row=5)
+        self.create_spinbox(left_frame, "Min-P (--min-p):", self.min_p, "最小概率采样（默认 0.05，0.0 = 禁用）。比 top-p 更新更好的采样方式。", from_=0, to=1, increment=0.05, row=5)
         self.presence_penalty = tk.StringVar(value="")
-        self.create_spinbox(sampling_group, "存在惩罚 (--presence-penalty):", self.presence_penalty, "话题存在惩罚（默认 0.0）。降低重复讨论相同话题。", from_=0, to=2, increment=0.1, row=6)
+        self.create_spinbox(left_frame, "存在惩罚 (--presence-penalty):", self.presence_penalty, "话题存在惩罚（默认 0.0）。降低重复讨论相同话题。", from_=0, to=2, increment=0.1, row=6)
         self.frequency_penalty = tk.StringVar(value="")
-        self.create_spinbox(sampling_group, "频率惩罚 (--frequency-penalty):", self.frequency_penalty, "词频惩罚（默认 0.0）。降低高频词重复出现。", from_=0, to=2, increment=0.1, row=7)
+        self.create_spinbox(left_frame, "频率惩罚 (--frequency-penalty):", self.frequency_penalty, "词频惩罚（默认 0.0）。降低高频词重复出现。", from_=0, to=2, increment=0.1, row=7)
         self.repeat_last_n = tk.StringVar(value="")
-        self.create_spinbox(sampling_group, "惩罚窗口 (--repeat-last-n):", self.repeat_last_n, "重复惩罚考虑的最近令牌数（默认 64，0 = 禁用，-1 = 上下文大小）。", from_=-1, to=4096, increment=1, row=8)
+        self.create_spinbox(left_frame, "惩罚窗口 (--repeat-last-n):", self.repeat_last_n, "重复惩罚考虑的最近令牌数（默认 64，0 = 禁用，-1 = 上下文大小）。", from_=-1, to=4096, increment=1, row=8)
 
-        # --- Advanced Sampling (collapsible) ---
+        # --- Advanced Sampling (side-by-side) ---
         self.adv_sampling_visible = tk.BooleanVar(value=False)
-        adv_toggle_frame = ttk.Frame(sampling_group)
-        adv_toggle_frame.grid(row=9, column=0, columnspan=3, sticky=tk.W, pady=(10, 0))
+        adv_toggle_frame = ttk.Frame(left_frame)
+        adv_toggle_frame.grid(row=9, column=0, columnspan=2, sticky=tk.W, pady=(10, 0))
         adv_toggle = ttk.Checkbutton(adv_toggle_frame, text="▸ 高级采样", variable=self.adv_sampling_visible, bootstyle="round-toggle")
         adv_toggle.pack(side=tk.LEFT)
         ToolTip(adv_toggle, "展开高级采样参数。建议一次只开一组：日常用 Mirostat，长文防重复用 DRY，创意写作加 XTC。")
 
-        self.adv_sampling_frame = ttk.Frame(sampling_group)
-        self.adv_sampling_frame.grid(row=10, column=0, columnspan=3, sticky=tk.EW, pady=5)
-        self.adv_sampling_frame.grid_remove()  # hidden by default
+        self.adv_sampling_frame = ttk.Frame(right_frame)
+        # hidden by default; packed when toggled
 
         def toggle_adv_sampling():
             if self.adv_sampling_visible.get():
-                self.adv_sampling_frame.grid()
+                self.adv_sampling_frame.pack(fill=tk.BOTH, expand=True)
             else:
-                self.adv_sampling_frame.grid_remove()
+                self.adv_sampling_frame.pack_forget()
         self.adv_sampling_visible.trace_add('write', lambda *_: toggle_adv_sampling())
 
         row = 0
@@ -492,7 +503,7 @@ class LlamaServerGUI:
         self.dry_penalty_last_n = tk.StringVar(value="")
         self.create_spinbox(dry_group, "惩罚窗口 (--dry-penalty-last-n):", self.dry_penalty_last_n, "DRY 扫描多少最近令牌检测重复。-1=整个上下文。推荐 -1（完整检测）。", from_=-1, to=999999, increment=1, row=3)
         self.dry_sequence_breaker = tk.StringVar(value="")
-        self.create_entry(dry_group, "分隔符 (--dry-sequence-breaker):", self.dry_sequence_breaker, 'DRY 序列分隔符。写入后遇到此字符视为打断重复（如 "\\n" 遇换行重置计数）。按需设置。', row=4)
+        self.create_entry(dry_group, "分隔符 (--dry-sequence-breaker):", self.dry_sequence_breaker, 'DRY 序列分隔符。写入后遇到此字符视为打断重复（如 "\\\\n" 遇换行重置计数）。按需设置。', row=4)
 
 
 
@@ -633,8 +644,8 @@ class LlamaServerGUI:
         access_group.columnconfigure(1, weight=1)
         self.api_key = tk.StringVar()
         self.create_entry(access_group, "API 密钥 (--api-key):", self.api_key, "API 密钥，用于令牌认证（可选）。", row=0)
-        self.no_webui = tk.BooleanVar(value=False)
-        self.create_checkbutton(access_group, "禁用内置 UI (--no-ui)", self.no_webui, "新版 llama.cpp 已无内置 Web 界面，此选项仅控制服务端 UI 配置。需要通过外部客户端（如 Open WebUI）连接。", row=1)
+        self.ui = tk.BooleanVar(value=False)
+        self.create_checkbutton(access_group, "启用内置 WebUI (--ui)", self.ui, "新版 llama.cpp 内置 Web UI 默认禁用，勾选后添加 --ui 参数启用内置 Web 界面。不再需要外部客户端，可直接在浏览器访问 http://host:port 使用。", row=1)
         self.embedding = tk.BooleanVar(value=False)
         self.create_checkbutton(access_group, "仅嵌入模式 (--embedding)", self.embedding, "启用仅嵌入模式（禁用聊天功能）。", row=2)
         self.pooling = tk.StringVar()
