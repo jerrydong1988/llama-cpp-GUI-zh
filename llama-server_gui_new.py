@@ -25,7 +25,7 @@ except ImportError:
     TRAY_AVAILABLE = False
 
 # Application version
-__version__ = "1.3.2"
+__version__ = "1.4.0"
 
 class LlamaServerGUI:
     def __init__(self, root):
@@ -80,6 +80,19 @@ class LlamaServerGUI:
         
         # Initialize config dropdown
         self._refresh_config_list()
+        
+        # Auto-load default.json if exists; otherwise seed an empty one
+        default_cfg = os.path.join(self._get_configs_dir(), 'default.json')
+        if os.path.isfile(default_cfg):
+            self.load_config(path=default_cfg)
+        else:
+            try:
+                with open(default_cfg, 'w', encoding='utf-8') as f:
+                    json.dump({}, f)
+                self.config_file = default_cfg
+            except Exception:
+                pass
+            self.config_combo.set('default')
         
         # Auto-adjust context slider when model path changes (debounced)
         self._ctx_slider_timer = None
@@ -296,6 +309,7 @@ class LlamaServerGUI:
         self.config_combo.bind('<<ComboboxSelected>>', self._on_config_select)
         ToolTip(self.config_combo, "选择保存的配置，自动加载。")
         self.create_button(left_grp, "💾 保存", self.save_named_config, "以当前名称保存配置。", bootstyle="secondary")
+        self.create_button(left_grp, "📋 另存为", self.save_as_new_config, "将当前设置保存为新配置。", bootstyle="secondary")
         self.create_button(left_grp, "🗑 删除", self.delete_named_config, "删除选中的配置。", bootstyle="secondary")
         self.create_button(left_grp, "⚡ 生成命令", self.show_command, "显示完整 llama-server 命令行。", bootstyle="info")
         
@@ -822,6 +836,11 @@ class LlamaServerGUI:
         self.repo_add_dir_btn.pack(side=tk.LEFT, padx=(0, 5))
         ToolTip(self.repo_add_dir_btn, "添加包含 GGUF 模型文件的目录。支持 LM Studio、NovaMax 等任意目录。")
         
+        self.repo_remove_dir_btn = ttk.Button(toolbar, text="✖ 移除目录",
+            command=self.repo_remove_selected_root_btn, bootstyle="secondary")
+        self.repo_remove_dir_btn.pack(side=tk.LEFT, padx=(0, 5))
+        ToolTip(self.repo_remove_dir_btn, "移除选中的自定义目录（仅限非内置目录）。")
+        
         self.repo_root_label = ttk.Label(toolbar, text="", foreground="gray", font=("", 8))
         self.repo_root_label.pack(side=tk.LEFT, padx=(5, 0))
         
@@ -1100,16 +1119,18 @@ class LlamaServerGUI:
                 self._repo_context_iid = iid
                 self.repo_context_menu.post(event.x_root, event.y_root)
     
-    def _repo_remove_selected_root(self):
-        """Remove a custom root directory from the scan list."""
-        iid = getattr(self, '_repo_context_iid', None)
+    def _repo_remove_root_by_iid(self, iid):
+        """Remove a custom root directory by tree item ID."""
         if not iid or iid not in self.repo_root_items:
             return
         root_info = self.repo_root_items[iid]
+        if root_info.get('builtin', False):
+            Messagebox.show_warning("内置目录不可移除。", "提示", parent=self.root)
+            return
         
-        reply = Messagebox.yesno(
-            f"确定将「{root_info['label']}」移出扫描列表？\n文件不会被删除。",
+        reply = tk.messagebox.askokcancel(
             "确认移除",
+            f"确定将「{root_info['label']}」移出扫描列表？\n文件不会被删除。",
             parent=self.root
         )
         if not reply:
@@ -1121,6 +1142,18 @@ class LlamaServerGUI:
             if os.path.normcase(r['path']) != os.path.normcase(root_info['path'])
         ]
         self.scan_downloaded_models()
+    
+    def _repo_remove_selected_root(self):
+        """Remove a custom root directory (called from right-click context menu)."""
+        self._repo_remove_root_by_iid(getattr(self, '_repo_context_iid', None))
+    
+    def repo_remove_selected_root_btn(self):
+        """Remove the currently selected root directory (called from toolbar button)."""
+        sel = self.repo_tree.selection()
+        if not sel:
+            Messagebox.show_warning("请先在左侧模型树中选中要移除的目录（根节点）。\n\n提示：点击目录名即可选中。", "提示", parent=self.root)
+            return
+        self._repo_remove_root_by_iid(sel[0])
     
     def repo_load_model(self):
         """Load the selected model into the main config."""
@@ -1155,9 +1188,9 @@ class LlamaServerGUI:
         if not self._repo_selected_path:
             return
         fname = os.path.basename(self._repo_selected_path)
-        reply = Messagebox.yesno(
-            f"确定要删除 {fname}？\n此操作不可撤销！",
+        reply = tk.messagebox.askyesno(
             "确认删除",
+            f"确定要删除 {fname}？\n此操作不可撤销！",
             parent=self.root
         )
         if not reply:
@@ -1482,9 +1515,9 @@ class LlamaServerGUI:
         if not eng:
             return
         
-        reply = Messagebox.yesno(
-            f"确定将「{eng['name']}」移出列表？\n文件不会被删除。",
+        reply = tk.messagebox.askyesno(
             "确认移除",
+            f"确定将「{eng['name']}」移出列表？\n文件不会被删除。",
             parent=self.root
         )
         if not reply:
@@ -1682,7 +1715,7 @@ class LlamaServerGUI:
             row = ttk.Frame(self.ms_file_checkframe)
             row.pack(fill=tk.X, padx=2, pady=1)
             
-            cb = ttk.Checkbutton(row, variable=var, bootstyle="round-toggle")
+            cb = ttk.Checkbutton(row, variable=var, bootstyle="round-toggle", command=self._ms_update_dl_button)
             cb.pack(side=tk.LEFT)
             
             # Determine file type label for tooltip
@@ -1745,11 +1778,10 @@ class LlamaServerGUI:
         for fi in files_to_dl:
             save_path = os.path.join(repo_dir, fi['path'])
             if os.path.exists(save_path):
-                reply = Messagebox.yesno(
-                    f"文件 {fi['name']} 已存在于\n{save_path}\n是否覆盖？",
+                reply = tk.messagebox.askyesno(
                     "文件已存在",
-                    parent=self.root
-                )
+                    f"文件 {fi['name']} 已存在于\n{save_path}\n是否覆盖？",
+                    parent=self.root)
                 if not reply:
                     return
         
@@ -2009,7 +2041,10 @@ class LlamaServerGUI:
         save_path = os.path.join(dest_dir, filename)
         
         if os.path.exists(save_path):
-            reply = Messagebox.yesno(f"文件 {filename} 已存在。\n是否覆盖？", "文件已存在", parent=self.root)
+            reply = tk.messagebox.askyesno(
+                "文件已存在",
+                f"文件 {filename} 已存在。\n是否覆盖？",
+                parent=self.root)
             if not reply:
                 return
         
@@ -2672,7 +2707,17 @@ class LlamaServerGUI:
         config['theme'] = self.current_theme
         config['ms_download_root'] = self.ms_download_root
         if hasattr(self, 'model_repo_roots'):
-            config['model_repo_roots'] = [r for r in self.model_repo_roots if not r.get('builtin')]
+            # Deduplicate non-builtin roots by normalized path
+            seen = set()
+            unique = []
+            for r in self.model_repo_roots:
+                if r.get('builtin'):
+                    continue
+                norm = os.path.normcase(os.path.normpath(r.get('path', '')))
+                if norm and norm not in seen:
+                    seen.add(norm)
+                    unique.append(r)
+            config['model_repo_roots'] = unique
         try:
             # Determine where to save: prefer provided path, otherwise show Save As dialog
             if path is None:
@@ -2751,9 +2796,9 @@ class LlamaServerGUI:
             if saved_theme in ('darkly', 'flatly') and saved_theme != self.current_theme:
                 self.toggle_theme()
             
-            # Restore download root
+            # Restore download root (always restore saved path; user sees it in display)
             saved_root = config.get('ms_download_root', '')
-            if saved_root and os.path.isdir(saved_root):
+            if saved_root:
                 self.ms_download_root = saved_root
             else:
                 self.ms_download_root = ""
@@ -2774,15 +2819,24 @@ class LlamaServerGUI:
             if eng_dir and os.path.isdir(eng_dir) and os.path.isfile(os.path.join(eng_dir, 'llama-server.exe')):
                 self.selected_engine_dir = eng_dir
             
-            # Restore custom model repo roots
+            # Restore custom model repo roots (replace, don't append to previous config's roots)
             saved_roots = config.get('model_repo_roots', [])
             if saved_roots and hasattr(self, 'model_repo_roots'):
+                # Remove previous non-builtin roots first
+                self.model_repo_roots = [r for r in self.model_repo_roots if r.get('builtin')]
                 for r in saved_roots:
                     if os.path.isdir(r.get('path', '')):
-                        r['builtin'] = False
-                        self.model_repo_roots.append(r)
-                        if 'label' not in r:
-                            r['label'] = os.path.basename(r['path'])
+                        # Deduplicate against existing roots (including builtin)
+                        norm_path = os.path.normcase(os.path.normpath(r['path']))
+                        duplicate = any(
+                            os.path.normcase(os.path.normpath(existing['path'])) == norm_path
+                            for existing in self.model_repo_roots
+                        )
+                        if not duplicate:
+                            r['builtin'] = False
+                            self.model_repo_roots.append(r)
+                            if 'label' not in r:
+                                r['label'] = os.path.basename(r['path'])
             
             # Update pointer to currently-loaded config
             self.config_file = load_path
@@ -2884,6 +2938,41 @@ class LlamaServerGUI:
         else:
             self._do_save_named(name)
     
+    def save_as_new_config(self):
+        """Save current settings as a NEW named config (always prompts for name)."""
+        dialog = ttk.Toplevel(self.root)
+        dialog.title("另存为新配置")
+        dialog.geometry("350x130")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        ttk.Label(dialog, text="新配置名称:", padding="10 10 0 5").pack(anchor=tk.W)
+        name_var = tk.StringVar()
+        entry = ttk.Entry(dialog, textvariable=name_var, width=30)
+        entry.pack(padx=10, pady=5, fill=tk.X)
+        entry.focus_set()
+        
+        def do_save():
+            n = name_var.get().strip()
+            if n:
+                dialog.destroy()
+                self._do_save_named(n)
+            else:
+                Messagebox.show_error("名称不能为空！", "错误", parent=dialog)
+        
+        def on_key(e):
+            if e.keysym == 'Return':
+                do_save()
+            elif e.keysym == 'Escape':
+                dialog.destroy()
+        
+        entry.bind('<Return>', on_key)
+        entry.bind('<Escape>', on_key)
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="确定", command=do_save, bootstyle="success").pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="取消", command=dialog.destroy, bootstyle="secondary").pack(side=tk.LEFT, padx=5)
+    
     def _do_save_named(self, name):
         """Save config with the given name."""
         if not name:
@@ -2900,9 +2989,9 @@ class LlamaServerGUI:
         if not name:
             Messagebox.show_warning("请先在配置下拉框中选择要删除的配置。", "提示")
             return
-        reply = Messagebox.yesno(
-            f"确定删除配置「{name}」？\n此操作不可撤销。",
+        reply = tk.messagebox.askokcancel(
             "确认删除",
+            f"确定删除配置「{name}」？\n此操作不可撤销。",
             parent=self.root
         )
         if not reply:
