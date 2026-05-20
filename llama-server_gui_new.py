@@ -25,7 +25,7 @@ except ImportError:
     TRAY_AVAILABLE = False
 
 # Application version
-__version__ = "1.5.1"
+__version__ = "1.5.2"
 
 class LlamaServerGUI:
     def __init__(self, root):
@@ -155,7 +155,7 @@ class LlamaServerGUI:
         ("api_key",       "api_key",       "--api-key",  "str",  ""),
         ("ssl_key_file",  "ssl_key_file",  "--ssl-key-file","str",""),
         ("ssl_cert_file", "ssl_cert_file", "--ssl-cert-file","str",""),
-        ("ui",            "ui",            "--ui",       "bool", False),
+        ("no_ui",         "no_ui",         "--no-ui",    "bool", False),
         ("embedding",     "embedding",     "--embedding","bool", False),
         ("pooling",       "pooling",       "--pooling",  "str",  ""),
         ("reranking",     "reranking",     "--reranking","bool", False),
@@ -644,8 +644,8 @@ class LlamaServerGUI:
         access_group.columnconfigure(1, weight=1)
         self.api_key = tk.StringVar()
         self.create_entry(access_group, "API 密钥 (--api-key):", self.api_key, "API 密钥，用于令牌认证（可选）。", row=0)
-        self.ui = tk.BooleanVar(value=False)
-        self.create_checkbutton(access_group, "启用内置 WebUI (--ui)", self.ui, "新版 llama.cpp 内置 Web UI 默认禁用，勾选后添加 --ui 参数启用内置 Web 界面。不再需要外部客户端，可直接在浏览器访问 http://host:port 使用。", row=1)
+        self.no_ui = tk.BooleanVar(value=False)
+        self.create_checkbutton(access_group, "禁用内置 UI (--no-ui)", self.no_ui, "新版 llama-server 默认已嵌入 WebUI，勾选后禁用。不勾选即可在浏览器访问 http://host:port 使用内置界面。", row=1)
         self.embedding = tk.BooleanVar(value=False)
         self.create_checkbutton(access_group, "仅嵌入模式 (--embedding)", self.embedding, "启用仅嵌入模式（禁用聊天功能）。", row=2)
         self.pooling = tk.StringVar()
