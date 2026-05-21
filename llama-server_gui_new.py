@@ -25,7 +25,7 @@ except ImportError:
     TRAY_AVAILABLE = False
 
 # Application version
-__version__ = "1.5.3"
+__version__ = "1.6.0"
 
 class LlamaServerGUI:
     def __init__(self, root):
@@ -75,6 +75,8 @@ class LlamaServerGUI:
         self.engine_dirs = []  # list of {"name": str, "dir": str, "exe": str, "source": str}
         self.selected_engine_dir = ""  # dir of currently selected engine
 
+        # Embedding mode support — must init before setup_ui (which creates tabs)
+        self._embedding_frames = []
         self.setup_ui()
         self.load_config()
         
@@ -96,13 +98,18 @@ class LlamaServerGUI:
         
         # Auto-adjust context slider when model path changes (debounced)
         self._ctx_slider_timer = None
+        self._emb_mode_timer = None
         def on_model_path_change(*_):
             if self._ctx_slider_timer:
                 self.root.after_cancel(self._ctx_slider_timer)
             self._ctx_slider_timer = self.root.after(500, self._auto_adjust_ctx_slider)
+            if self._emb_mode_timer:
+                self.root.after_cancel(self._emb_mode_timer)
+            self._emb_mode_timer = self.root.after(300, self._check_embedding_mode)
         self.model_path.trace_add('write', on_model_path_change)
         # Also trigger on startup (if model already loaded)
         self.root.after(600, self._auto_adjust_ctx_slider)
+        self.root.after(800, self._check_embedding_mode)
 
     def get_config_path(self, filename):
         """Get the path for config file that works with PyInstaller."""
@@ -194,6 +201,79 @@ class LlamaServerGUI:
     # Parameters not auto-generated in generate_command (handled individually)
     _SPECIAL_PARAMS = {"model_path", "ctx_size", "gpu_layers", "flash_attn",
                        "reasoning_effort", "cache_prompt", "numa"}
+
+    # ── Embedding mode --------------------------------------------------------
+    # Param keys (from _PARAM_DEFS) to skip in generate_command when --embedding is on
+    _EMBEDDING_SKIP_PARAMS = frozenset({
+        'lora_path', 'mmproj_path', 'grammar_file',
+        'chat_template', 'reasoning_format', 'reasoning_effort',
+        'reasoning', 'jinja', 'reasoning_budget',
+        'n_predict', 'ignore_eos', 'json_schema',
+        'temp', 'top_k', 'top_p', 'repeat_penalty', 'min_p',
+        'presence_penalty', 'frequency_penalty', 'repeat_last_n',
+        'seed', 'mirostat',
+        'draft_model_path', 'draft_gpu_layers', 'draft_tokens',
+        'spec_draft_n_min', 'spec_type',
+        'moe_cpu_layers',
+        'context_shift',
+    })
+
+    def _set_embedding_mode(self, enabled: bool):
+        """Enable/disable UI controls for embedding mode."""
+        state = tk.DISABLED if enabled else tk.NORMAL
+
+        # 1. Embedding checkbox itself — auto-set + lock
+        self.embedding.set(enabled)
+        if hasattr(self, 'embedding_cb') and self.embedding_cb:
+            self.embedding_cb.config(state=tk.DISABLED if enabled else tk.NORMAL)
+
+        # 2. Pooling: auto-recommend
+        if enabled and hasattr(self, 'pooling') and not self.pooling.get():
+            self.pooling.set('mean')
+
+        # 3. Recursive disable helper
+        def _set_state_recursive(widget, st):
+            try:
+                widget.config(state=st)
+            except tk.TclError:
+                pass
+            for child in widget.winfo_children():
+                _set_state_recursive(child, st)
+
+        # 4. Toggle registered Labelframes
+        for frame in self._embedding_frames:
+            try:
+                _set_state_recursive(frame, state)
+                frame.config(text=frame['text'].replace(' 🛑', '') + (' 🛑' if enabled else ''))
+            except Exception:
+                pass
+
+        # 4b. MoE CPU layers — single widget inside a shared frame
+        moe_spin = getattr(self, 'moe_cpu_layers_spin', None)
+        if moe_spin:
+            try:
+                moe_spin.config(state=state)
+            except tk.TclError:
+                pass
+
+        # 5. Status indicator in server tab
+        if hasattr(self, '_embedding_status') and self._embedding_status:
+            if enabled:
+                self._embedding_status.config(
+                    text="📊 Embedding Mode 已激活 — 采样/推测解码/对话行为等生成参数已自动禁用，仅向量模型相关的参数可配置。取消勾选 ──embedding 可恢复",
+                    bootstyle="info")
+                self._embedding_status.pack(fill=tk.X, pady=(0, 5))
+            else:
+                self._embedding_status.pack_forget()
+
+    def _check_embedding_mode(self):
+        """Check current model path and update embedding mode."""
+        path = self.model_path.get().strip()
+        if path:
+            is_emb = self._is_embedding_model(filepath=path, fname=os.path.basename(path))
+            self._set_embedding_mode(is_emb)
+        else:
+            self._set_embedding_mode(False)
 
     def _get_var(self, attr_name):
         return getattr(self, attr_name, None)
@@ -367,6 +447,8 @@ class LlamaServerGUI:
 
         # --- Chat Behavior ---
         chat_group = ttk.Labelframe(parent, text="对话行为", padding="10")
+        self._embedding_frames.append(ext_group)
+        self._embedding_frames.append(chat_group)
         chat_group.pack(fill=tk.X, pady=5)
         self.chat_template = tk.StringVar()
         chat_templates = ["", "bailing", "chatglm3", "chatglm4", "chatml", "command-r", "deepseek", "deepseek2", "deepseek3", "exaone3", "gemma", "gpt-oss", "kimi-k2", "llama2", "llama3", "llama4", "mistral", "openchat", "phi3", "phi4", "vicuna", "zephyr"]
@@ -396,6 +478,7 @@ class LlamaServerGUI:
         
         # --- Output Control ---
         output_group = ttk.Labelframe(sf, text="输出控制", padding="10")
+        self._embedding_frames.append(output_group)
         output_group.pack(fill=tk.X, pady=5, side=tk.TOP)
         
         self.n_predict = tk.StringVar(value="")
@@ -408,6 +491,7 @@ class LlamaServerGUI:
         
         # --- Sampling Parameters ---
         sampling_group = ttk.Labelframe(sf, text="采样参数", padding="10")
+        self._embedding_frames.append(sampling_group)
         sampling_group.pack(fill=tk.X, pady=5)
         
         # Side-by-side layout: basic params on left, advanced on right
@@ -580,13 +664,13 @@ class LlamaServerGUI:
         flash_attn_options = ["on", "off", "auto"]
         self.create_combobox(mem_group, "Flash Attention (-fa):", self.flash_attn, "设置 Flash Attention（on/off/auto，默认 auto）。", flash_attn_options, row=0)
         self.moe_cpu_layers = tk.StringVar(value="")
-        self.create_spinbox(mem_group, "MoE CPU 层数 (--n-cpu-moe):", self.moe_cpu_layers, "GPU 放不下时保留在 CPU 上的 MoE 层数。", row=1, from_=0, to=99, increment=1)
+        self.moe_cpu_layers_spin = self.create_spinbox(mem_group, "MoE CPU 层数 (--n-cpu-moe):", self.moe_cpu_layers, "GPU 放不下时保留在 CPU 上的 MoE 层数。", row=1, from_=0, to=99, increment=1)
         self.mlock = tk.BooleanVar(value=False)
         self.create_checkbutton(mem_group, "内存锁定 (--mlock)", self.mlock, "将模型锁定在 RAM 中防止交换。", row=2)
         self.no_mmap = tk.BooleanVar(value=False)
         self.create_checkbutton(mem_group, "禁用内存映射 (--no-mmap)", self.no_mmap, "禁用模型文件的内存映射。", row=3)
         self.numa = tk.BooleanVar(value=False)
-        self.create_checkbutton(mem_group, "NUMA 优化 (--numa)", self.numa, "启用 NUMA 感知优化（特定硬件）。", row=4)
+        self.create_checkbutton(mem_group, "NUMA 优化 (--numa)", self.numa, "启用 NUMA 感知优化。仅多路 CPU 服务器需要（如双路 Xeon/EPYC），单 CPU 系统（如本机 Strix Halo）开启无效果。", row=4)
         # --- Cache Type for Draft K/V (moved here from Speculative Decoding)
         cache_types = ["", "f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "iq4_nl", "q5_0", "q5_1"]
         self.cache_type_k = tk.StringVar(value="")
@@ -596,6 +680,7 @@ class LlamaServerGUI:
 
         # --- Speculative Decoding ---
         spec_group = ttk.Labelframe(parent, text="推测解码", padding="10")
+        self._embedding_frames.append(spec_group)
         spec_group.pack(fill=tk.X, pady=5)
         self.draft_model_path = tk.StringVar()
         self.create_file_entry(spec_group, "草稿模型 (-md):", self.draft_model_path, "推测解码用的草稿模型路径。", ".gguf", row=0)
@@ -611,6 +696,7 @@ class LlamaServerGUI:
         # (草稿模型下载已整合到「模型」标签页的 ModelScope 区域)
         # --- Server Reliability ---
         server_rel_group = ttk.Labelframe(parent, text="服务器可靠性", padding="10")
+        self._embedding_frames.append(server_rel_group)
         server_rel_group.pack(fill=tk.X, pady=5)
         self.timeout = tk.StringVar(value="")
         self.create_spinbox(server_rel_group, "超时秒数 (--timeout):", self.timeout, "服务器读写超时秒数（默认 600）。", from_=1, to=3600, increment=10, row=0)
@@ -625,6 +711,10 @@ class LlamaServerGUI:
         parent.rowconfigure(2, weight=1) # Allow custom args group to expand
         parent.columnconfigure(0, weight=1)
         
+        # --- Embedding Mode Status ---
+        self._embedding_status = ttk.Label(parent, text="", bootstyle="info")
+        # hidden by default; shown by _set_embedding_mode
+
         # --- Network Configuration ---
         net_group = ttk.Labelframe(parent, text="网络配置", padding="10")
         net_group.grid(row=0, column=0, sticky=EW, pady=5)
@@ -647,12 +737,17 @@ class LlamaServerGUI:
         self.no_ui = tk.BooleanVar(value=False)
         self.create_checkbutton(access_group, "禁用内置 UI (--no-ui)", self.no_ui, "新版 llama-server 默认已嵌入 WebUI，勾选后禁用。不勾选即可在浏览器访问 http://host:port 使用内置界面。", row=1)
         self.embedding = tk.BooleanVar(value=False)
-        self.create_checkbutton(access_group, "仅嵌入模式 (--embedding)", self.embedding, "启用仅嵌入模式（禁用聊天功能）。", row=2)
+        self.embedding_cb = ttk.Checkbutton(access_group, text="仅嵌入模式 (--embedding)",
+            variable=self.embedding, bootstyle="round-toggle")
+        self.embedding_cb.grid(row=2, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        ToolTip(self.embedding_cb, text="启用仅嵌入模式（禁用聊天和生成功能）。加载向量模型（如 Qwen3-Embedding、BGE）时自动勾选，取消勾选可恢复文本生成模式。")
+        # Sync UI when user manually toggles the checkbox
+        self.embedding.trace_add('write', lambda *_: self._set_embedding_mode(self.embedding.get()))
         self.pooling = tk.StringVar()
         pooling_options = ["", "none", "mean", "cls", "last", "rank"]
-        self.create_combobox(access_group, "嵌入池化 (--pooling):", self.pooling, "嵌入模型的池化类型（使用嵌入模式时需设置）。", pooling_options, row=3)
+        self.create_combobox(access_group, "嵌入池化 (--pooling):", self.pooling, "Embedding 模型的池化策略。mean=全局平均（通用推荐），cls=首令牌（BGE 适用），last=末令牌，rank=排序专用。留空则使用模型默认。", pooling_options, row=3)
         self.reranking = tk.BooleanVar(value=False)
-        self.create_checkbutton(access_group, "重排序端点 (--reranking)", self.reranking, "启用重排序端点（RAG 场景）。", row=4)
+        self.create_checkbutton(access_group, "重排序端点 (--reranking)", self.reranking, "启用 /v1/rerank 端点（RAG 检索重排序）。仅 cross-encoder/rerank 模型需要，如 BGE-Reranker。", row=4)
 
 
         # --- Custom Arguments Management ---
@@ -1188,6 +1283,8 @@ class LlamaServerGUI:
             self.mmproj_path.set("")
         # Also fill alias immediately (context slider debounce may be delayed)
         self._auto_fill_alias(force=True)
+        # Check embedding mode
+        self._check_embedding_mode()
     
     def repo_load_mmproj(self):
         """Load the selected mmproj into the config."""
@@ -2291,6 +2388,7 @@ class LlamaServerGUI:
     # file classification — shared between local tree + ModelScope
     # ------------------------------------------------------------------
     _gguf_type_cache: dict = {}
+    _gguf_meta_cache: dict = {}
 
     def _classify_gguf_file(self, filepath=None, fname=None):
         """Determine if a GGUF file is a multimodal projector (mmproj).
@@ -2331,7 +2429,49 @@ class LlamaServerGUI:
 
         return 'unknown'
 
-    def create_entry(self, parent, label_text, string_var, tooltip_text, row):
+    # ------------------------------------------------------------------
+    # embedding model detection
+    # ------------------------------------------------------------------
+    _EMBEDDING_ARCHS = frozenset({'bge', 'gte', 'e5', 'text-embedding', 'sentence-bert', 'sentence-t5', 'instructor'})
+
+    def _is_embedding_model(self, filepath=None, fname=None):
+        """Detect if a GGUF file is an embedding/vector model.
+
+        Priority:
+        1. Local file → read GGUF header for ``general.architecture`` / ``general.basename``.
+        2. ModelScope remote → filename heuristic (``"embed"`` in name).
+
+        ``_gguf_type_cache`` is shared with ``_classify_gguf_file``.
+        """
+        # --- GGUF header (authoritative for local files) ---
+        if filepath and os.path.isfile(filepath):
+            mcache = self._gguf_meta_cache
+            if filepath not in mcache:
+                mcache[filepath] = self._read_gguf_metadata(filepath) or None
+            meta = mcache[filepath]
+            if meta:
+                    # Check architecture name
+                    arch = meta.get('general.architecture', '')
+                    if arch and arch.lower() in self._EMBEDDING_ARCHS:
+                        return True
+                    # Check basename / name for embedding keywords
+                    basename = meta.get('general.basename', '')
+                    if basename and 'embed' in basename.lower():
+                        return True
+                    name = meta.get('general.name', '')
+                    if name and 'embed' in name.lower():
+                        return True
+
+        # --- Filename heuristic (ModelScope remote / fallback) ---
+        if fname:
+            lower = fname.lower()
+            # Must NOT be mmproj or imatrix
+            if 'mmproj' in lower or 'imatrix' in lower:
+                return False
+            if 'embed' in lower:
+                return True
+
+        return False
         label = ttk.Label(parent, text=label_text)
         label.grid(row=row, column=0, sticky=tk.W, padx=5, pady=5)
         entry = ttk.Entry(parent, textvariable=string_var, width=30)
@@ -2340,6 +2480,15 @@ class LlamaServerGUI:
         ToolTip(label, text=tooltip_text)
         ToolTip(entry, text=tooltip_text)
     
+    def create_entry(self, parent, label_text, string_var, tooltip_text, row):
+        label = ttk.Label(parent, text=label_text)
+        label.grid(row=row, column=0, sticky=tk.W, padx=5, pady=5)
+        entry = ttk.Entry(parent, textvariable=string_var, width=30)
+        entry.grid(row=row, column=1, sticky=tk.EW, padx=5, pady=5)
+        parent.columnconfigure(1, weight=1)
+        ToolTip(label, text=tooltip_text)
+        ToolTip(entry, text=tooltip_text)
+
     def create_spinbox(self, parent, label_text, variable, tooltip_text, from_, to, increment, row):
         label = ttk.Label(parent, text=label_text)
         label.grid(row=row, column=0, sticky=tk.W, padx=5, pady=5)
@@ -2501,9 +2650,12 @@ class LlamaServerGUI:
             cmd = ["llama-server", "-m", self.model_path.get().strip()]
         
         # ── auto-generated from _PARAM_DEFS ──
+        is_emb = self.embedding.get()
         for ck, an, flag, kind, default in self._PARAM_DEFS:
             if ck in self._SPECIAL_PARAMS:
                 continue  # handled specially below
+            if is_emb and ck in self._EMBEDDING_SKIP_PARAMS:
+                continue  # not applicable in embedding mode
             
             var = self._get_var(an)
             if var is None:
