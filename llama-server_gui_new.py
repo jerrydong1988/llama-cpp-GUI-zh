@@ -25,7 +25,7 @@ except ImportError:
     TRAY_AVAILABLE = False
 
 # Application version
-__version__ = "1.5.2"
+__version__ = "1.5.3"
 
 class LlamaServerGUI:
     def __init__(self, root):
@@ -1025,10 +1025,8 @@ class LlamaServerGUI:
         size = os.path.getsize(fpath)
         size_str = self._format_size(size)
         
-        is_mmproj = fname.startswith('mmproj')
-        is_imatrix = 'imatrix' in fname.lower()
-        icon = "📷" if is_mmproj else ("📊" if is_imatrix else "📄")
-        ftype = "mmproj" if is_mmproj else ("imatrix" if is_imatrix else "model")
+        ftype = self._classify_gguf_file(filepath=fpath, fname=fname)
+        icon = "📷" if ftype == 'mmproj' else ("📊" if ftype == 'imatrix' else "📄")
         
         safe_name = fname.replace('.', '_').replace(' ', '_')
         file_iid = f"file_{parent_iid}_{safe_name}"
@@ -1176,9 +1174,13 @@ class LlamaServerGUI:
         repo_dir = os.path.dirname(self._repo_selected_path)
         mmproj_found = None
         if os.path.isdir(repo_dir):
-            for f in os.listdir(repo_dir):
-                if f.startswith('mmproj') and f.endswith('.gguf'):
-                    mmproj_found = os.path.join(repo_dir, f)
+            for f in sorted(os.listdir(repo_dir)):
+                if not f.endswith('.gguf'):
+                    continue
+                fpath = os.path.join(repo_dir, f)
+                ftype = self._classify_gguf_file(filepath=fpath, fname=f)
+                if ftype == 'mmproj':
+                    mmproj_found = fpath
                     break
         if mmproj_found:
             self.mmproj_path.set(mmproj_found)
@@ -1676,14 +1678,13 @@ class LlamaServerGUI:
                         continue
                     name = f.get('Name', '')
                     is_gguf = name.endswith('.gguf')
-                    is_mmproj = is_gguf and name.startswith('mmproj')
-                    is_imatrix = 'imatrix' in name.lower()
+                    ftype = self._classify_gguf_file(fname=name)
                     if is_gguf or name.endswith('.gguf_file') or name.endswith('.txt'):
                         all_files.append({
                             'name': name,
                             'path': f.get('Path', name),
                             'size': f.get('Size', 0),
-                            'type': 'mmproj' if is_mmproj else ('imatrix' if is_imatrix else 'model')
+                            'type': ftype
                         })
                 
                 # Sort: mmproj first, then models, then others
@@ -2020,7 +2021,7 @@ class LlamaServerGUI:
                     if f.get('Type') != 'blob':
                         continue
                     name = f.get('Name', '')
-                    if name.endswith('.gguf') and not name.startswith('mmproj'):
+                    if name.endswith('.gguf') and self._classify_gguf_file(fname=name) != 'mmproj':
                         ggufs.append({
                             'name': name, 'path': f.get('Path', name),
                             'size': f.get('Size', 0)
@@ -2283,9 +2284,52 @@ class LlamaServerGUI:
         name = meta.get('general.name', '')
         if name:
             lines.insert(0, f"模型: {name}")
-        
+
         return " | ".join(lines) if lines else "基本元信息"
 
+    # ------------------------------------------------------------------
+    # file classification — shared between local tree + ModelScope
+    # ------------------------------------------------------------------
+    _gguf_type_cache: dict = {}
+
+    def _classify_gguf_file(self, filepath=None, fname=None):
+        """Determine if a GGUF file is a multimodal projector (mmproj).
+
+        Priority:
+        1. If *filepath* points to a local file → read GGUF header ``general.type`` (definitive).
+        2. If only *fname* is available (ModelScope remote) → filename heuristic.
+
+        Returns ``"mmproj"``, ``"model"``, ``"imatrix"``, or ``"unknown"``.
+        """
+        # --- Filename heuristic (always checked — imatrix is detected by name, not header) ---
+        if fname:
+            lower = fname.lower()
+            if 'imatrix' in lower:
+                return 'imatrix'
+
+        # --- GGUF header (authoritative for mmproj vs model) ---
+        if filepath and os.path.isfile(filepath):
+            cache = self._gguf_type_cache
+            if filepath not in cache:
+                meta = self._read_gguf_metadata(filepath)
+                if meta is not None:
+                    cache[filepath] = meta.get('general.type', 'unknown')
+                else:
+                    cache[filepath] = 'unknown'
+            cached = cache[filepath]
+            if cached in ('mmproj', 'model'):
+                return cached
+
+        # --- Filename heuristic (mmproj fallback for ModelScope remote) ---
+        if fname:
+            lower = fname.lower()
+            if 'mmproj' in lower:
+                return 'mmproj'
+            # If the file ends with .gguf and doesn't match any special type, it's a model
+            if lower.endswith('.gguf'):
+                return 'model'
+
+        return 'unknown'
 
     def create_entry(self, parent, label_text, string_var, tooltip_text, row):
         label = ttk.Label(parent, text=label_text)
