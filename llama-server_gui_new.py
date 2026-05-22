@@ -15,6 +15,7 @@ import webbrowser
 import urllib.request
 import urllib.error
 import time
+import re
 
 try:
     import pystray
@@ -77,24 +78,20 @@ class LlamaServerGUI:
 
         # Embedding mode support — must init before setup_ui (which creates tabs)
         self._embedding_frames = []
+        self._param_frames = []
+        # Multi-instance management
+        self._instances = {}
+        self._active_instance_id = ""
+        self._is_switching = False
+        self._instance_logs = {}
         self.setup_ui()
         self.load_config()
-        
-        # Initialize config dropdown
-        self._refresh_config_list()
-        
-        # Auto-load default.json if exists; otherwise seed an empty one
-        default_cfg = os.path.join(self._get_configs_dir(), 'default.json')
-        if os.path.isfile(default_cfg):
-            self.load_config(path=default_cfg)
-        else:
-            try:
-                with open(default_cfg, 'w', encoding='utf-8') as f:
-                    json.dump({}, f)
-                self.config_file = default_cfg
-            except Exception:
-                pass
-            self.config_combo.set('default')
+        # Auto-migrate from single to multi-instance if needed
+        if not self._instances:
+            self._migrate_single_to_instance()
+        if self._instances and not os.path.exists(self.config_file):
+            self._auto_save_instances()
+        self.root.after(1000, self._restore_running_instances)
         
         # Auto-adjust context slider when model path changes (debounced)
         self._ctx_slider_timer = None
@@ -344,13 +341,14 @@ class LlamaServerGUI:
         # Define sections: (iid, text, parent, setup_method, pack_direction)
         self._nav_sections = {}
         sections = [
-            ("repo",      "🏪 模型仓库",       "",              "setup_model_repo_tab",         "grid"),
-            ("engine",    "🖥 引擎管理",       "",              "setup_engine_tab",             "grid"),
+            ("instances", "📋 实例管理", "", "setup_instance_tab", "pack"),
             ("models",    "📁 模型与参数",    "",              "setup_model_tab",              "pack"),
             ("gen",       "⚙️ 生成参数",      "",              "setup_generation_tab",         "pack"),
             ("perf",      "🚀 性能",          "",              "setup_performance_core_tab",   "pack"),
             ("advanced",  "🔬 高级",          "",              "setup_performance_advanced_tab","pack"),
             ("api",       "🌐 网络与API",     "",              "setup_server_api_tab",         "grid"),
+            ("engine",    "🖥 引擎管理",       "",              "setup_engine_tab",             "grid"),
+            ("repo",      "🏪 模型仓库",       "",              "setup_model_repo_tab",         "grid"),
             ("output",    "📊 服务器输出",     "",              "setup_output_tab",             "pack"),
         ]
         
@@ -358,6 +356,10 @@ class LlamaServerGUI:
             self.nav_tree.insert(parent, tk.END, iid=iid, text=text)
         
         self.nav_tree.bind("<<TreeviewSelect>>", self._on_nav_select)
+        # Refresh instance display after UI is fully set up
+        self.root.after(150, self._refresh_instance_tree)
+        self.root.after(200, self._refresh_instance_combo)
+        self.root.after(250, self._sync_bottom_bar_for_active_instance)
         
         # Right: Content area (panels stacked, one visible at a time)
         self.content_frame = ttk.Frame(main_frame)
@@ -372,7 +374,7 @@ class LlamaServerGUI:
             getattr(self, method)(panel)
         
         # Show first panel by default
-        first_iid = sections[0][0]
+        first_iid = 'instances'  # Show instance panel by default
         self.nav_tree.selection_set(first_iid)
         self._show_panel(first_iid)
         
@@ -380,20 +382,12 @@ class LlamaServerGUI:
         bottom_bar = ttk.Frame(self.root, padding="10 10")
         bottom_bar.pack(side=tk.BOTTOM, fill=tk.X)
         
-        # Left: config management
+        # Left: generate command
         left_grp = ttk.Frame(bottom_bar)
         left_grp.pack(side=tk.LEFT)
-        ttk.Label(left_grp, text="配置:").pack(side=tk.LEFT, padx=(0, 3))
-        self.config_combo = ttk.Combobox(left_grp, values=[], width=22, state="readonly")
-        self.config_combo.pack(side=tk.LEFT, padx=(0, 5))
-        self.config_combo.bind('<<ComboboxSelected>>', self._on_config_select)
-        ToolTip(self.config_combo, "选择保存的配置，自动加载。")
-        self.create_button(left_grp, "💾 保存", self.save_named_config, "以当前名称保存配置。", bootstyle="secondary")
-        self.create_button(left_grp, "📋 另存为", self.save_as_new_config, "将当前设置保存为新配置。", bootstyle="secondary")
-        self.create_button(left_grp, "🗑 删除", self.delete_named_config, "删除选中的配置。", bootstyle="secondary")
-        self.create_button(left_grp, "⚡ 生成命令", self.show_command, "显示完整 llama-server 命令行。", bootstyle="info")
+        self.create_button(left_grp, "⚡ 生成命令", self.show_command, "显示当前实例的完整 llama-server 命令行。", bootstyle="info")
         
-        # Right: start/stop
+        # Right: start/stop/browser
         right_grp = ttk.Frame(bottom_bar)
         right_grp.pack(side=tk.RIGHT)
         self.server_status_var = tk.StringVar(value="")
@@ -404,10 +398,10 @@ class LlamaServerGUI:
             "打开服务器 API 页面。新版 llama.cpp 已无内置聊天界面，推荐使用外部客户端连接。", state=tk.DISABLED, bootstyle="primary-outline")
         self.stop_button = self.create_button(right_grp, "停止 ⏹", self.stop_server,
             "停止服务器。", state=tk.DISABLED, bootstyle="danger")
-        self.start_button = self.create_button(right_grp, "▶ 启动服务器", self.start_server,
-            "使用当前设置启动服务器。", bootstyle="success")
+        self.start_button = self.create_button(right_grp, "▶ 启动", self.start_server,
+            "启动当前实例。运行后参数面板将自动锁定。", bootstyle="success")
         
-        self.root.bind('<Control-s>', lambda e: self.save_named_config())
+        self.root.bind('<Control-s>', lambda e: self._auto_save_instances())
         # Sync download dir display after UI is set up
         self.root.after(50, self._sync_dl_dir_display)
         self.root.bind('<Control-Shift-S>', lambda e: self.start_server() if not self.is_running else None)
@@ -415,7 +409,15 @@ class LlamaServerGUI:
     def _on_nav_select(self, event):
         selection = self.nav_tree.selection()
         if selection:
-            self._show_panel(selection[0])
+            panel_id = selection[0]
+            self._show_panel(panel_id)
+            # Refresh instance tree whenever navigating to it
+            if panel_id == "instances" and hasattr(self, '_refresh_instance_tree'):
+                self._refresh_instance_tree()
+                self._refresh_instance_combo()
+                inst = self._instances.get(self._active_instance_id)
+                if inst and hasattr(self, '_set_run_lock'):
+                    self._set_run_lock(inst.get("is_running", False))
     
     def _show_panel(self, iid):
         """Show the selected content panel, hide all others."""
@@ -791,17 +793,6 @@ class LlamaServerGUI:
         self.output_text.tag_configure("warn", foreground="#f39c12")       # orange: warnings
         self.output_text.tag_configure("feature", foreground="#3498db")    # blue: MTP, flash attn, reasoning
         self.output_text.tag_configure("normal", foreground="#7f8c8d")     # gray: default
-        
-        self._log_patterns = [
-            ("error", ["error", "fail", "panic", "fatal", "out of memory",
-                        "cudamalloc", "ggml_backend.*error", "rocm error",
-                        "could not", "unable to", "segfault", "abort", "exception"]),
-            ("speed", ["tokens/s", "server is listening", "eval time",
-                        "prompt eval", "prompt eval time", "total time"]),
-            ("warn", ["warn", "warning", "deprecated"]),
-            ("feature", ["mtp", "draft head registered", "reasoning", "flash att",
-                          "speculative", "grammar", "embedding"]),
-        ]
         
         clear_btn = ttk.Button(parent, text="清空输出", command=self.clear_output, bootstyle="secondary-outline")
         clear_btn.pack(pady=(10, 0), anchor=tk.E)
@@ -2721,10 +2712,22 @@ class LlamaServerGUI:
         ttk.Button(cmd_window, text="复制到剪贴板", command=copy_command).pack(pady=10)
 
     def start_server(self):
-        if self.is_running: return
+        # Save current instance config first
+        self._save_active_instance()
+        inst = self._instances.get(self._active_instance_id)
+        if not inst:
+            self.update_output("[错误] 没有活动的实例\n", tag="error")
+            return
+        if inst.get("is_running", False):
+            return
+        
+        eng_dir = inst.get("engine_dir", "")
+        params = inst.get("params", {})
+        
         cmd = self.generate_command()
-        if not cmd: return
-            
+        if not cmd:
+            return
+        
         self.output_text.delete(1.0, tk.END)
         command_str = " ".join(f'"{arg}"' if " " in arg else arg for arg in cmd)
         self.update_output(f"▶ Starting server with command:\n{command_str}\n\n" + "="*80 + "\n")
@@ -2736,18 +2739,20 @@ class LlamaServerGUI:
                     startupinfo = subprocess.STARTUPINFO()
                     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
-                self.server_process = subprocess.Popen(
+                process = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     universal_newlines=False, bufsize=1, startupinfo=startupinfo
                 )
+                inst["process"] = process
+                inst["running_pid"] = str(process.pid)
                 
-                for line_bytes in iter(self.server_process.stdout.readline, b''):
+                for line_bytes in iter(process.stdout.readline, b''):
                     try:
                         line = line_bytes.decode('utf-8')
                     except UnicodeDecodeError:
                         line = line_bytes.decode('latin-1', errors='replace')
                     self.root.after(0, self.update_output, line)
-                self.server_process.wait()
+                process.wait()
                 self.root.after(0, self.server_stopped)
                 
             except FileNotFoundError:
@@ -2759,7 +2764,9 @@ class LlamaServerGUI:
         
         threading.Thread(target=run_server, daemon=True).start()
         
-        self.is_running = True
+        inst["is_running"] = True
+        inst["running_port"] = params.get("port", "8080")
+        inst["running_host"] = params.get("host", "127.0.0.1")
         self._health_check_active = True
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
@@ -2769,26 +2776,66 @@ class LlamaServerGUI:
         
         self._startup_start_time = time.perf_counter()
         if hasattr(self, '_startup_sec'):
-            del self._startup_sec  # reset for new run
+            del self._startup_sec
         
         # Capture connection info at launch time (thread-safe)
-        health_host = self.host.get().strip()
+        health_host = inst["running_host"]
         if health_host == '0.0.0.0': health_host = 'localhost'
-        health_port = self.port.get().strip()
+        health_port = inst["running_port"]
         
-        # Start health check thread
-        threading.Thread(target=self._health_check_loop, 
+        # Start health monitor thread
+        threading.Thread(target=self._health_check_loop,
             args=(health_host, health_port), daemon=True).start()
+        
+        self._refresh_instance_tree()
+        self._sync_bottom_bar_for_active_instance()
+        self._auto_save_instances()
 
     def stop_server(self):
-        if self.server_process and self.is_running:
+        inst = self._instances.get(self._active_instance_id)
+        if not inst:
+            self.update_output("[错误] 没有活动的实例\n", tag="error")
+            return
+        if not inst.get("is_running", False):
+            return
+        # Try process object first
+        proc = inst.get("process")
+        if proc:
             try:
-                self.server_process.terminate()
+                proc.terminate()
                 self.update_output("\n" + "="*80 + "\n⏹️ 正在停止服务器...\n")
             except Exception as e:
                 self.update_output(f"\n⚠ 停止服务器错误：{e}\n")
+        else:
+            # Try PID recovery
+            pid = inst.get("running_pid", "")
+            if pid:
+                try:
+                    subprocess.run(
+                        ["powershell", "-Command", f"Stop-Process -Id {pid} -Force"],
+                        capture_output=True, timeout=5
+                    )
+                    self.update_output(f"\n⏹️ 已通过 PID {pid} 终止进程\n")
+                except Exception as e:
+                    self.update_output(f"\n⚠ 无法终止进程 PID {pid}：{e}\n")
+        # Clear run state
+        inst["is_running"] = False
+        inst["process"] = None
+        inst["running_pid"] = ""
+        inst["health_active"] = False
+        # Kill the _monitor_active flag (global fallback)
+        self._health_check_active = False
+        self._refresh_instance_tree()
+        self._sync_bottom_bar_for_active_instance()
+        self._auto_save_instances()
 
     def server_stopped(self):
+        inst = self._instances.get(self._active_instance_id)
+        if inst:
+            inst["is_running"] = False
+            inst["process"] = None
+            inst["running_pid"] = ""
+            inst["health_active"] = False
         self.is_running = False
         self._health_check_active = False
         self.start_button.config(state=tk.NORMAL)
@@ -2797,8 +2844,11 @@ class LlamaServerGUI:
         self.server_status_var.set("⏹ 已停止")
         self.server_status_label.config(foreground="gray")
         self.update_output("\n" + "=" * 80 + "\n⏹️ 服务器进程已终止。\n" + "=" * 80 + "\n", tag="normal")
+        self._refresh_instance_tree()
+        self._sync_bottom_bar_for_active_instance()
+        self._auto_save_instances()
 
-    def update_output(self, text, tag=None):
+    def update_output(self, text, tag=None, inst_id=None):
         """Append text to output with optional keyword highlighting.
         
         Lines matching known keywords are automatically colored:
@@ -2809,9 +2859,19 @@ class LlamaServerGUI:
         - everything else -> gray
         If 'tag' is provided, the entire text block uses that single tag.
         """
+        # If inst_id is None, use active instance (or global if no active)
+        if inst_id is None and hasattr(self, '_active_instance_id') and self._active_instance_id:
+            inst_id = self._active_instance_id
         if tag:
             self.output_text.insert(tk.END, text, tag)
             self.output_text.see(tk.END)
+            # Store in per-instance log buffer
+            if inst_id and hasattr(self, '_instance_logs'):
+                if inst_id not in self._instance_logs:
+                    from collections import deque
+                    self._instance_logs[inst_id] = deque(maxlen=2000)
+                self._instance_logs[inst_id].append((text, tag))
+                self._append_instance_log_file(inst_id, text, tag)
             return
         
         import re
@@ -2825,20 +2885,20 @@ class LlamaServerGUI:
                 continue
             
             # Check against patterns (first match wins)
-            matched = False
-            lower = line.lower()
-            for tag_name, patterns in self._log_patterns:
-                for pat in patterns:
-                    if re.search(pat, lower):
-                        self.output_text.insert(tk.END, line, tag_name)
-                        matched = True
-                        break
-                if matched:
-                    break
-            if not matched:
+            tag = self._resolve_log_tag(line)
+            if tag:
+                self.output_text.insert(tk.END, line, tag)
+            else:
                 self.output_text.insert(tk.END, line, "normal")
         
         self.output_text.see(tk.END)
+        # Store in per-instance log buffer
+        if inst_id and hasattr(self, '_instance_logs'):
+            if inst_id not in self._instance_logs:
+                from collections import deque
+                self._instance_logs[inst_id] = deque(maxlen=2000)
+            self._instance_logs[inst_id].append((text, tag))
+            self._append_instance_log_file(inst_id, text, tag)
     
     def _monitor_loop(self, url, interval=5):
         """Continuous health monitoring — ping every `interval` seconds."""
@@ -2917,193 +2977,89 @@ class LlamaServerGUI:
     def clear_output(self):
         self.output_text.delete(1.0, tk.END)
 
-    def save_config(self, path=None):
-        """Save the current configuration.
-
-        If path is None, show a Save As dialog to choose a filename. The file will be
-        saved inside a 'configs' directory next to the script (created if missing), and
-        will be given a .json extension if omitted. After saving, update self.config_file.
-        """
-        config = self._params_to_dict()
-        # Add non-PARAM_DEFS items
-        config['custom_arguments_list'] = self.custom_arguments
-        config['ctx_size_auto'] = self.ctx_size_auto.get()
-        config['engine_dir'] = self.selected_engine_dir
-        # Save all custom engine directories for multi-engine support
-        config['engine_dirs_list'] = [
-            eng['dir'] for eng in getattr(self, 'engine_dirs', [])
-            if eng.get('source') == '自定义'
-        ]
-        config['theme'] = self.current_theme
-        config['ms_download_root'] = self.ms_download_root
-        if hasattr(self, 'model_repo_roots'):
-            # Deduplicate non-builtin roots by normalized path
-            seen = set()
-            unique = []
-            for r in self.model_repo_roots:
-                if r.get('builtin'):
-                    continue
-                norm = os.path.normcase(os.path.normpath(r.get('path', '')))
-                if norm and norm not in seen:
-                    seen.add(norm)
-                    unique.append(r)
-            config['model_repo_roots'] = unique
+    def _build_global_config(self):
+        config = {"version": 2, "instances": {}}
+        for inst_id, inst in self._instances.items():
+            data = dict(inst)
+            data.pop("process", None)
+            data.pop("_logs", None)
+            config["instances"][inst_id] = data
+        config["_active_instance"] = self._active_instance_id
+        config["engine_dirs"] = self.engine_dirs
+        config["ms_download_root"] = self.ms_download_root
+        config["current_theme"] = self.current_theme
+        config["model_repo_roots"] = getattr(self, 'model_repo_roots', [])
+        return config
+    
+    def _auto_save_instances(self):
         try:
-            # Determine where to save: prefer provided path, otherwise show Save As dialog
-            if path is None:
-                # Ensure configs directory exists next to the executable/script
-                app_dir = os.path.dirname(self.get_config_path(''))
-                configs_dir = os.path.join(app_dir, 'configs')
-                os.makedirs(configs_dir, exist_ok=True)
-
-                save_path = filedialog.asksaveasfilename(
-                    title="保存配置为",
-                    defaultextension='.json',
-                    filetypes=[('JSON 文件', '*.json'), ('所有文件', '*.*')],
-                    initialdir=configs_dir,
-                    initialfile='config-'
-                )
-                if not save_path:
-                    return
-            else:
-                save_path = path
-
-            # Ensure .json extension
-            if not save_path.lower().endswith('.json'):
-                save_path = save_path + '.json'
-
-            with open(save_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=4)
-
-            # Update current config file pointer
-            self.config_file = save_path
-            Messagebox.ok(f"配置已保存至 {save_path}", "成功")
+            config = self._build_global_config()
+            self.config_file = self.get_config_path("instances.json")
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            Messagebox.show_error(f"保存配置失败： {e}", "错误")
-
+            self.update_output(f"[保存失败] {e}\n", tag="error")
+    
     def load_config(self, path=None, browse=False):
-        """Load configuration.
-
-        If browse=True or path is provided, open a file dialog (or load provided path).
-        If neither is provided, load from self.config_file (used on startup).
-        """
-        load_path = None
-        # If user requested browsing, show open dialog populated from configs dir
-        if browse:
-            app_dir = os.path.dirname(self.get_config_path(''))
-            configs_dir = os.path.join(app_dir, 'configs')
-            os.makedirs(configs_dir, exist_ok=True)
-            chosen = filedialog.askopenfilename(
-                title="选择配置",
-                filetypes=[('JSON 文件', '*.json'), ('所有文件', '*.*')],
-                initialdir=configs_dir
-            )
-            if not chosen:
+        if path is None:
+            path = self.get_config_path("instances.json")
+        if not os.path.isfile(path):
+            # Try old format migration
+            old_path = self.get_config_path("llama_server_config.json")
+            if os.path.isfile(old_path):
+                try:
+                    with open(old_path, 'r', encoding='utf-8') as f:
+                        old = json.load(f)
+                    if "version" in old and old.get("version") == 2:
+                        self._instances = {}
+                        for k, v in old.get("instances", {}).items():
+                            self._instances[k] = v
+                            self._instances[k]["process"] = None
+                        self._active_instance_id = old.get("_active_instance", "")
+                        self.engine_dirs = old.get("engine_dirs", [])
+                        self.ms_download_root = old.get("ms_download_root", "")
+                        theme = old.get("current_theme", "darkly")
+                        if theme != self.current_theme:
+                            self.toggle_theme()
+                        if hasattr(self, 'model_repo_roots'):
+                            self.model_repo_roots = old.get("model_repo_roots", [self.model_repo_roots[0]] if self.model_repo_roots else [])
+                    else:
+                        self._migrate_single_to_instance()
+                    return
+                except Exception:
+                    self._migrate_single_to_instance()
                 return
-            load_path = chosen
-        elif path:
-            load_path = path
-        else:
-            load_path = self.config_file
-
-        if not os.path.exists(load_path):
-            # If the user explicitly asked to browse or provided a path, warn them.
-            # If this is the startup default (neither browse nor path provided),
-            # silently return so the UI keeps its default values.
-            if browse or path:
-                Messagebox.show_warning(f"未找到配置文件： {load_path}", "未找到")
+            self._migrate_single_to_instance()
             return
-
         try:
-            with open(load_path, 'r', encoding='utf-8') as f:
+            with open(path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
-            
-            # ── auto-loaded from _PARAM_DEFS (single source of truth) ──
-            self._params_from_dict(config)
-            
-            # Restore theme
-            saved_theme = config.get('theme', 'darkly')
-            if saved_theme in ('darkly', 'flatly') and saved_theme != self.current_theme:
-                self.toggle_theme()
-            
-            # Restore download root (always restore saved path; user sees it in display)
-            saved_root = config.get('ms_download_root', '')
-            if saved_root:
-                self.ms_download_root = saved_root
+            if "version" in config and config.get("version") == 2:
+                self._instances = {}
+                for k, v in config.get("instances", {}).items():
+                    self._instances[k] = v
+                    self._instances[k]["process"] = None
+                self._active_instance_id = config.get("_active_instance", "")
+                self.engine_dirs = config.get("engine_dirs", [])
+                self.ms_download_root = config.get("ms_download_root", "")
+                theme = config.get("current_theme", "darkly")
+                if theme != self.current_theme:
+                    self.toggle_theme()
+                if hasattr(self, 'model_repo_roots'):
+                    loaded_roots = config.get("model_repo_roots", [])
+                    if loaded_roots:
+                        self.model_repo_roots = loaded_roots
             else:
-                self.ms_download_root = ""
-            
-            # Non-registered params
-            self.ctx_size_auto.set(config.get('ctx_size_auto', False))
-            
-            # custom arguments
-            self.custom_arguments = config.get('custom_arguments_list', [])
-            if not self.custom_arguments and 'custom_args' in config:
-                old_args_str = config['custom_args'].strip()
-                if old_args_str:
-                    self.custom_arguments.append({"value": old_args_str, "enabled": True})
-            self.rebuild_custom_args_list()
-
-            # Restore engine selection
-            eng_dir = config.get('engine_dir', '')
-            if eng_dir and os.path.isdir(eng_dir) and os.path.isfile(os.path.join(eng_dir, 'llama-server.exe')):
-                self.selected_engine_dir = eng_dir
-            
-            # Restore all custom engine directories (multi-engine support)
-            saved_custom = config.get('engine_dirs_list', [])
-            self._custom_engine_dirs = [
-                d for d in saved_custom
-                if os.path.isdir(d) and os.path.isfile(os.path.join(d, 'llama-server.exe'))
-            ]
-            # Ensure selected_engine_dir is also in the custom list if it's a custom engine
-            if self.selected_engine_dir and os.path.normcase(self.selected_engine_dir) not in [
-                os.path.normcase(d) for d in self._custom_engine_dirs
-            ]:
-                exe_path = os.path.join(self.selected_engine_dir, 'llama-server.exe')
-                if os.path.isfile(exe_path):
-                    self._custom_engine_dirs.append(self.selected_engine_dir)
-            
-            # Restore custom model repo roots (replace, don't append to previous config's roots)
-            saved_roots = config.get('model_repo_roots', [])
-            if saved_roots and hasattr(self, 'model_repo_roots'):
-                # Remove previous non-builtin roots first
-                self.model_repo_roots = [r for r in self.model_repo_roots if r.get('builtin')]
-                for r in saved_roots:
-                    if os.path.isdir(r.get('path', '')):
-                        # Deduplicate against existing roots (including builtin)
-                        norm_path = os.path.normcase(os.path.normpath(r['path']))
-                        duplicate = any(
-                            os.path.normcase(os.path.normpath(existing['path'])) == norm_path
-                            for existing in self.model_repo_roots
-                        )
-                        if not duplicate:
-                            r['builtin'] = False
-                            self.model_repo_roots.append(r)
-                            if 'label' not in r:
-                                r['label'] = os.path.basename(r['path'])
-            
-            # Update pointer to currently-loaded config
-            self.config_file = load_path
-
-            self.update_all_sliders()
-            
-            # Sync config dropdown to show the loaded config name
-            configs_dir = self._get_configs_dir()
-            try:
-                rel = os.path.relpath(load_path, configs_dir)
-                if rel.endswith('.json'):
-                    self.config_combo.set(rel[:-5])
-            except (ValueError, OSError):
-                pass
-            
-            # Refresh model repo tree (custom roots may have changed)
-            if hasattr(self, 'scan_downloaded_models'):
-                self.scan_downloaded_models()
-            # Refresh engine list to show correct default engine marker
-            if hasattr(self, 'scan_engines'):
-                self.scan_engines()
+                self._migrate_single_to_instance()
+            # Switch to loaded instance
+            if self._active_instance_id in self._instances:
+                self._params_from_dict(self._instances[self._active_instance_id].get("params", {}))
+                inst = self._instances[self._active_instance_id]
+                self.selected_engine_dir = inst.get("engine_dir", "")
+                self.ctx_size_auto.set(inst.get("ctx_size_auto", False))
+                self.custom_arguments = list(inst.get("custom_arguments", []))
         except Exception as e:
-            Messagebox.show_error(f"加载配置失败： {e}", "错误")
+            self._migrate_single_to_instance()
     
     def toggle_theme(self):
         """Toggle between darkly (dark) and flatly (light) themes."""
@@ -3115,146 +3071,16 @@ class LlamaServerGUI:
         )
     
     # --- 配置管理 (Named Configs) ---
-    def _get_configs_dir(self):
-        app_dir = os.path.dirname(self.get_config_path(''))
-        return os.path.join(app_dir, 'configs')
-    
-    def _refresh_config_list(self):
-        """Scan configs/ directory and update the dropdown."""
-        configs_dir = self._get_configs_dir()
-        os.makedirs(configs_dir, exist_ok=True)
-        names = []
-        for f in sorted(os.listdir(configs_dir)):
-            if f.endswith('.json'):
-                name = f[:-5]  # remove .json
-                names.append(name)
-        self.config_combo['values'] = names
-    
-    def _on_config_select(self, event):
-        """Auto-load the selected named config."""
-        name = self.config_combo.get()
-        if not name:
-            return
-        configs_dir = self._get_configs_dir()
-        path = os.path.join(configs_dir, name + '.json')
-        if os.path.isfile(path):
-            self.load_config(path=path)
-            # Refresh config list (might have updated from another session)
-            self._refresh_config_list()
-    
-    def save_named_config(self):
-        """Save current settings as a named config."""
-        name = self.config_combo.get().strip()
-        if not name:
-            # Ask for a new name
-            dialog = ttk.Toplevel(self.root)
-            dialog.title("保存配置")
-            dialog.geometry("350x130")
-            dialog.transient(self.root)
-            dialog.grab_set()
-            
-            ttk.Label(dialog, text="配置名称:", padding="10 10 0 5").pack(anchor=tk.W)
-            name_var = tk.StringVar()
-            entry = ttk.Entry(dialog, textvariable=name_var, width=30)
-            entry.pack(padx=10, pady=5, fill=tk.X)
-            entry.focus_set()
-            
-            def do_save():
-                n = name_var.get().strip()
-                if n:
-                    dialog.destroy()
-                    self._do_save_named(n)
-                else:
-                    Messagebox.show_error("名称不能为空！", "错误", parent=dialog)
-            
-            def on_key(e):
-                if e.keysym == 'Return':
-                    do_save()
-                elif e.keysym == 'Escape':
-                    dialog.destroy()
-            
-            entry.bind('<Return>', on_key)
-            entry.bind('<Escape>', on_key)
-            btn_frame = ttk.Frame(dialog)
-            btn_frame.pack(pady=10)
-            ttk.Button(btn_frame, text="确定", command=do_save, bootstyle="success").pack(side=tk.LEFT, padx=5)
-            ttk.Button(btn_frame, text="取消", command=dialog.destroy, bootstyle="secondary").pack(side=tk.LEFT, padx=5)
-        else:
-            self._do_save_named(name)
-    
-    def save_as_new_config(self):
-        """Save current settings as a NEW named config (always prompts for name)."""
-        dialog = ttk.Toplevel(self.root)
-        dialog.title("另存为新配置")
-        dialog.geometry("350x130")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        ttk.Label(dialog, text="新配置名称:", padding="10 10 0 5").pack(anchor=tk.W)
-        name_var = tk.StringVar()
-        entry = ttk.Entry(dialog, textvariable=name_var, width=30)
-        entry.pack(padx=10, pady=5, fill=tk.X)
-        entry.focus_set()
-        
-        def do_save():
-            n = name_var.get().strip()
-            if n:
-                dialog.destroy()
-                self._do_save_named(n)
-            else:
-                Messagebox.show_error("名称不能为空！", "错误", parent=dialog)
-        
-        def on_key(e):
-            if e.keysym == 'Return':
-                do_save()
-            elif e.keysym == 'Escape':
-                dialog.destroy()
-        
-        entry.bind('<Return>', on_key)
-        entry.bind('<Escape>', on_key)
-        btn_frame = ttk.Frame(dialog)
-        btn_frame.pack(pady=10)
-        ttk.Button(btn_frame, text="确定", command=do_save, bootstyle="success").pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="取消", command=dialog.destroy, bootstyle="secondary").pack(side=tk.LEFT, padx=5)
-    
-    def _do_save_named(self, name):
-        """Save config with the given name."""
-        if not name:
-            return
-        configs_dir = self._get_configs_dir()
-        path = os.path.join(configs_dir, name + '.json')
-        self.save_config(path=path)
-        self._refresh_config_list()
-        self.config_combo.set(name)
-    
-    def delete_named_config(self):
-        """Delete the currently selected named config."""
-        name = self.config_combo.get().strip()
-        if not name:
-            Messagebox.show_warning("请先在配置下拉框中选择要删除的配置。", "提示")
-            return
-        reply = tk.messagebox.askokcancel(
-            "确认删除",
-            f"确定删除配置「{name}」？\n此操作不可撤销。",
-            parent=self.root
-        )
-        if not reply:
-            return
-        
-        configs_dir = self._get_configs_dir()
-        path = os.path.join(configs_dir, name + '.json')
-        try:
-            os.remove(path)
-            self._refresh_config_list()
-            self.config_combo.set('')
-            Messagebox.ok(f"配置「{name}」已删除。", "删除成功", parent=self.root)
-        except Exception as e:
-            Messagebox.show_error(f"删除失败：{e}", "错误", parent=self.root)
+
 
     def open_browser(self):
-        host = self.host.get().strip()
+        inst = self._instances.get(self._active_instance_id)
+        if not inst:
+            return
+        port = inst.get("running_port") or inst.get("params", {}).get("port", "8080")
+        host = inst.get("running_host") or inst.get("params", {}).get("host", "127.0.0.1")
         if host == '0.0.0.0': host = 'localhost'
-        url = f"http://{host}:{self.port.get().strip()}"
+        url = f"http://{host}:{port}"
         try:
             webbrowser.open(url)
             self.update_output(f"🌐 已打开浏览器：{url}\n")
@@ -3307,7 +3133,560 @@ class LlamaServerGUI:
             self.tray_icon = self.create_tray_icon()
             threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
+    def _release_switch_lock(self):
+        """Release the instance switch lock."""
+        self._is_switching = False
+
+    def _get_logs_dir(self):
+        d = os.path.join(os.path.dirname(self.config_file), "logs")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def _append_instance_log_file(self, inst_id, text, tag):
+        try:
+            path = os.path.join(self._get_logs_dir(), f"{inst_id}.log")
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(f"{tag or ''}|{text}")
+        except Exception:
+            pass
+
+    def _load_instance_log_file(self, inst_id):
+        from collections import deque
+        try:
+            path = os.path.join(self._get_logs_dir(), f"{inst_id}.log")
+            if not os.path.isfile(path):
+                return
+            buf = deque(maxlen=2000)
+            with open(path, "r", encoding="utf-8") as f:
+                for raw in f:
+                    raw = raw.rstrip("\n\r")
+                    if "|" in raw:
+                        tag, line = raw.split("|", 1)
+                    else:
+                        tag, line = "", raw
+                    buf.append((line.rstrip('\r') + '\n', tag or None))
+            self._instance_logs[inst_id] = buf
+        except Exception:
+            pass
+
+    _log_patterns = None
+
+    def _resolve_log_tag(self, text):
+        if self._log_patterns is None:
+            self._log_patterns = [
+                ("error", re.compile(r'error|traceback|exception', re.I)),
+                ("warn", re.compile(r'warn|注意|failed|fail', re.I)),
+                ("speed", re.compile(r'token|tok/s|tok\/s|tokens/s', re.I)),
+                ("info", re.compile(r'info|load|start|building|running', re.I)),
+            ]
+        for tag_name, pattern in self._log_patterns:
+            if pattern.search(text):
+                return tag_name
+        return None
+
+    def _replay_instance_log(self, inst_id):
+        self.output_text.delete(1.0, tk.END)
+        lines = self._instance_logs.get(inst_id, [])
+        for line, tag in lines:
+            if tag is None:
+                tag = self._resolve_log_tag(line)
+            self.output_text.insert(tk.END, line, tag)
+        self.output_text.see(tk.END)
+
+    def _sync_bottom_bar_for_active_instance(self):
+        inst = self._instances.get(self._active_instance_id)
+        if not inst:
+            self.server_status_var.set("")
+            self.start_button.config(state=tk.NORMAL)
+            self.stop_button.config(state=tk.DISABLED)
+            self.browser_button.config(state=tk.DISABLED)
+            return
+        running = inst.get("is_running", False)
+        if running:
+            port = inst.get("running_port") or inst.get("params", {}).get("port", "?")
+            self.server_status_var.set(f"▶ {inst['name']}·运行中 ({port})")
+            self.server_status_label.config(foreground="green")
+            self.start_button.config(state=tk.DISABLED)
+            self.stop_button.config(state=tk.NORMAL)
+            self.browser_button.config(state=tk.NORMAL)
+        else:
+            self.server_status_var.set(f"⏹ {inst['name']}·已停止")
+            self.server_status_label.config(foreground="gray")
+            self.start_button.config(state=tk.NORMAL)
+            self.stop_button.config(state=tk.DISABLED)
+            self.browser_button.config(state=tk.DISABLED)
+
+    def _migrate_single_to_instance(self):
+        inst_id = "instance_1"
+        self._instances[inst_id] = {
+            "id": inst_id,
+            "name": "LLaMA 1",
+            "params": self._params_to_dict(),
+            "engine_dir": self.selected_engine_dir,
+            "ctx_size_auto": self.ctx_size_auto.get(),
+            "custom_arguments": list(self.custom_arguments),
+            "process": None,
+            "is_running": False,
+            "health_active": False,
+            "running_port": "",
+            "running_host": "",
+        }
+        self._active_instance_id = inst_id
+        self._refresh_instance_combo()
+
+    def _save_active_instance(self):
+        inst = self._instances.get(self._active_instance_id)
+        if not inst:
+            return
+        inst["params"] = self._params_to_dict()
+        inst["engine_dir"] = self.selected_engine_dir
+        inst["ctx_size_auto"] = self.ctx_size_auto.get()
+        inst["custom_arguments"] = list(self.custom_arguments)
+
+    def _switch_to_instance(self, instance_id):
+        if instance_id not in self._instances:
+            return
+        self._is_switching = True
+        self._active_instance_id = instance_id
+        inst = self._instances[instance_id]
+        self._params_from_dict(inst["params"])
+        self.selected_engine_dir = inst.get("engine_dir", "")
+        self.ctx_size_auto.set(inst.get("ctx_size_auto", False))
+        self.custom_arguments = list(inst.get("custom_arguments", []))
+        self.rebuild_custom_args_list()
+        self.update_all_sliders()
+        self.root.after_idle(lambda: self.scan_engines() if hasattr(self, 'scan_engines') else None)
+        self.root.after_idle(lambda: self.scan_downloaded_models() if hasattr(self, 'scan_downloaded_models') else None)
+        self._sync_bottom_bar_for_active_instance()
+        self._replay_instance_log(instance_id)
+        self.update_output(f"\n[切换到 {instance_id}]\n")
+        if hasattr(self, 'instance_combo'):
+            self._refresh_instance_combo()
+        self.root.after(0, self._auto_save_instances)
+        new_inst = self._instances.get(instance_id)
+        if new_inst and hasattr(self, '_set_run_lock'):
+            self._set_run_lock(new_inst.get("is_running", False))
+        self.root.after(200, lambda: self._release_switch_lock())
+
+    def _restore_running_instances(self):
+        import os, subprocess
+        self.update_output("检查后台进程... ")
+        for inst_id, inst in list(self._instances.items()):
+            self._load_instance_log_file(inst_id)
+            pid = inst.get("running_pid", "")
+            self.update_output(f"{inst['name']}: PID={pid} ")
+            if not pid:
+                continue
+            try:
+                si = None
+                if os.name == 'nt':
+                    si = subprocess.STARTUPINFO()
+                    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                r = subprocess.run(
+                    ["powershell", "-Command", f"Get-Process -Id {pid} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"],
+                    capture_output=True, timeout=5, startupinfo=si
+                )
+                still_running = str(pid) in r.stdout.decode('utf-8', errors='replace')
+            except Exception as e:
+                self.update_output(f"错误:{e} ")
+                still_running = False
             
+            if still_running:
+                self.update_output("→存活\n")
+                params = inst.get("params", {})
+                host = params.get("host", "127.0.0.1")
+                port = params.get("port", "")
+                if port:
+                    inst["is_running"] = True
+                    inst["running_port"] = port
+                    inst["running_host"] = host
+                    inst["health_active"] = True
+                    self.update_output(f"✓ 恢复 {inst['name']}·后台进程 (PID {pid}, 端口 {port})\n", tag="speed")
+                    url = f"http://{host}:{port}/health"
+                    threading.Thread(
+                        target=self._monitor_loop,
+                        args=(url,),
+                        kwargs={"inst_id": inst_id},
+                        daemon=True
+                    ).start()
+            else:
+                inst["running_pid"] = ""
+        self._refresh_instance_tree()
+        self._sync_bottom_bar_for_active_instance()
+        self._refresh_instance_combo()
+
+    def setup_instance_tab(self, parent):
+        # ── Toolbar ──
+        toolbar = ttk.Frame(parent)
+        toolbar.grid(row=0, column=0, sticky=tk.EW, pady=(0, 5))
+        self.inst_add_btn = ttk.Button(toolbar, text="➕ 添加实例",
+            command=self._instance_add, bootstyle="success")
+        self.inst_add_btn.pack(side=tk.LEFT, padx=(0, 5))
+        ToolTip(self.inst_add_btn, "创建新实例。")
+        self.inst_clone_btn = ttk.Button(toolbar, text="📋 克隆",
+            command=self._instance_clone, state=tk.DISABLED, bootstyle="info")
+        self.inst_clone_btn.pack(side=tk.LEFT, padx=(0, 5))
+        ToolTip(self.inst_clone_btn, "复制选中实例的配置为新实例。")
+        self.inst_rename_btn = ttk.Button(toolbar, text="✏ 重命名",
+            command=self._instance_rename, state=tk.DISABLED, bootstyle="secondary")
+        self.inst_rename_btn.pack(side=tk.LEFT, padx=(0, 5))
+        ToolTip(self.inst_rename_btn, "修改选中实例的名称。")
+        self.inst_delete_btn = ttk.Button(toolbar, text="🗑 删除",
+            command=self._instance_delete, state=tk.DISABLED, bootstyle="danger-outline")
+        self.inst_delete_btn.pack(side=tk.LEFT, padx=(0, 5))
+        ToolTip(self.inst_delete_btn, "删除选中实例（需先停止该实例）。")
+        self.inst_help = ttk.Label(toolbar, text="", foreground="gray", font=("", 8))
+        self.inst_help.pack(side=tk.RIGHT, padx=(5, 0))
+
+        # ── Instance TreeView ──
+        tree_frame = ttk.Frame(parent)
+        tree_frame.grid(row=1, column=0, sticky=tk.NSEW)
+        tree_frame.rowconfigure(0, weight=1)
+        tree_frame.columnconfigure(0, weight=1)
+
+        cols = ('status', 'port', 'model', 'engine')
+        style = ttk.Style()
+        style.configure("Instance.Treeview")
+        style.map("Instance.Treeview",
+            background=[("selected", "#2c6496")],
+            foreground=[("selected", "white")])
+        self.instance_tree = ttk.Treeview(tree_frame, columns=cols, show='tree headings',
+            selectmode='browse', height=10, style="Instance.Treeview")
+        self.instance_tree.heading('#0', text='实例名称')
+        self.instance_tree.column('#0', width=200, minwidth=140)
+        self.instance_tree.heading('status', text='状态')
+        self.instance_tree.column('status', width=90)
+        self.instance_tree.heading('port', text='端口')
+        self.instance_tree.column('port', width=70)
+        self.instance_tree.heading('model', text='模型')
+        self.instance_tree.column('model', width=250, minwidth=150)
+        self.instance_tree.heading('engine', text='引擎')
+        self.instance_tree.column('engine', width=180, minwidth=100)
+
+        tree_scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.instance_tree.yview)
+        self.instance_tree.configure(yscrollcommand=tree_scroll.set)
+        self.instance_tree.grid(row=0, column=0, sticky=tk.NSEW)
+        tree_scroll.grid(row=0, column=1, sticky=tk.NS)
+
+        self.instance_tree.bind('<<TreeviewSelect>>', self._on_instance_tree_select)
+        self.instance_tree.tag_configure('running', foreground='#27ae60')
+
+        # ── Status bar ──
+        self.inst_status_var = tk.StringVar(value="")
+        self.inst_status = ttk.Label(parent, textvariable=self.inst_status_var, foreground="gray")
+        self.inst_status.grid(row=2, column=0, sticky=tk.W, pady=(5, 0))
+
+        # Configure grid weights
+        parent.rowconfigure(1, weight=1)
+        parent.columnconfigure(0, weight=1)
+
+    def _refresh_instance_tree(self):
+        if not hasattr(self, 'instance_tree'):
+            return
+        for item in self.instance_tree.get_children():
+            self.instance_tree.delete(item)
+
+        for inst_id, inst in self._instances.items():
+            is_active = (inst_id == self._active_instance_id)
+            running = inst.get("is_running", False)
+            status_str = "● 运行中" if running else "○ 已停止"
+            port_str = inst.get("running_port") or inst.get("params", {}).get("port", "")
+            model_str = ""
+            engine_str = ""
+            params = inst.get("params", {})
+            if params.get("model_path", ""):
+                model_str = os.path.basename(params["model_path"])
+            elif inst.get("engine_dir", ""):
+                model_str = f"(引擎: {os.path.basename(inst['engine_dir'])})"
+            else:
+                model_str = "(未配置)"
+            eng_dir = inst.get("engine_dir", "")
+            if eng_dir:
+                engine_str = os.path.basename(eng_dir)
+            else:
+                engine_str = "(默认)"
+
+            display_name = f"⭐ {inst['name']}" if is_active else f"   {inst['name']}"
+            tags = []
+            if running:
+                tags.append('running')
+            if is_active:
+                tags.append('active')
+            self.instance_tree.insert('', tk.END, iid=inst_id,
+                text=display_name, values=(status_str, port_str, model_str, engine_str),
+                tags=tags)
+
+        running_count = sum(1 for inst in self._instances.values() if inst.get("is_running"))
+        total = len(self._instances)
+        self.inst_status_var.set(f"共 {total} 个实例，{running_count} 个运行中")
+        self.inst_help.config(text="选中实例自动切换为当前配置，可在底部栏启动/停止。")
+        if self._active_instance_id in self._instances:
+            try:
+                self.instance_tree.selection_set(self._active_instance_id)
+                self.instance_tree.see(self._active_instance_id)
+                self.instance_tree.focus(self._active_instance_id)
+            except tk.TclError:
+                pass
+
+    def _refresh_instance_combo(self):
+        if not hasattr(self, 'instance_combo'):
+            return
+        names = []
+        for inst in self._instances.values():
+            names.append(inst["name"])
+        self.instance_combo['values'] = names
+        inst = self._instances.get(self._active_instance_id)
+        if inst:
+            try:
+                self.instance_combo.set(inst["name"])
+            except tk.TclError:
+                pass
+
+    def _update_star_markers(self, active_iid):
+        if not hasattr(self, 'instance_tree'):
+            return
+        for item in self.instance_tree.get_children():
+            d = self._instances.get(item)
+            if d:
+                prefix = "⭐ " if item == active_iid else "   "
+                try:
+                    self.instance_tree.item(item, text=f"{prefix}{d['name']}")
+                except tk.TclError:
+                    pass
+
+    def _on_instance_tree_select(self, event):
+        if self._is_switching:
+            return
+        sel = self.instance_tree.selection()
+        if not sel:
+            return
+        self._is_switching = True
+        try:
+            inst_id = sel[0]
+            if inst_id not in self._instances:
+                return
+            inst = self._instances[inst_id]
+            running = inst.get("is_running", False)
+            self.inst_clone_btn.config(state=tk.NORMAL)
+            self.inst_rename_btn.config(state=tk.NORMAL)
+            self.inst_delete_btn.config(state=tk.DISABLED if running else tk.NORMAL)
+            if inst_id != self._active_instance_id:
+                self._save_active_instance()
+                self._active_instance_id = inst_id
+                self._switch_to_instance(inst_id)
+                click_inst = self._instances.get(inst_id)
+                if click_inst:
+                    if click_inst.get("is_running", False):
+                        self.start_button.config(state=tk.DISABLED)
+                        self.stop_button.config(state=tk.NORMAL)
+                        self.browser_button.config(state=tk.NORMAL)
+                        port = click_inst.get("running_port") or click_inst.get("params", {}).get("port", "?")
+                        self.server_status_var.set(f"▶ {click_inst['name']}·运行中 ({port})")
+                        self.server_status_label.config(foreground="green")
+                    else:
+                        self.start_button.config(state=tk.NORMAL)
+                        self.stop_button.config(state=tk.DISABLED)
+                        self.browser_button.config(state=tk.DISABLED)
+                        self.server_status_var.set(f"⏹ {click_inst['name']}·已停止")
+                        self.server_status_label.config(foreground="gray")
+                if hasattr(self, '_update_star_markers'):
+                    self._update_star_markers(inst_id)
+        finally:
+            self.root.after(200, lambda: self._release_switch_lock())
+
+    def _instance_add(self):
+        n = 1
+        while f"instance_{n}" in self._instances:
+            n += 1
+        inst_id = f"instance_{n}"
+        used_ports = set()
+        for inst in self._instances.values():
+            p = inst.get("params", {}).get("port", "")
+            if p:
+                used_ports.add(p)
+        default_port = "8082"
+        if default_port in used_ports:
+            for p in range(8090, 9000):
+                if str(p) not in used_ports:
+                    default_port = str(p)
+                    break
+        self._instances[inst_id] = {
+            "id": inst_id,
+            "name": f"LLaMA {n}",
+            "params": dict((ck, default) for ck, an, flag, kind, default in self._PARAM_DEFS),
+            "engine_dir": self.selected_engine_dir,
+            "ctx_size_auto": False,
+            "custom_arguments": [],
+            "process": None,
+            "is_running": False,
+            "health_active": False,
+            "running_port": "",
+            "running_host": "",
+            "running_pid": "",
+        }
+        self._instances[inst_id]["params"]["port"] = default_port
+        self._instances[inst_id]["params"]["host"] = "127.0.0.1"
+        self._switch_to_instance(inst_id)
+        self._refresh_instance_tree()
+        self._refresh_instance_combo()
+        Messagebox.ok(
+            f"已添加实例「{self._instances[inst_id]['name']}」\n"
+            f"端口预设为 {default_port}，可在「网络与API」标签页修改。",
+            "添加成功", parent=self.root)
+
+    def _instance_clone(self):
+        sel = self.instance_tree.selection()
+        if not sel:
+            return
+        src_id = sel[0]
+        if src_id not in self._instances:
+            return
+        src = self._instances[src_id]
+        n = 1
+        while f"instance_{n}" in self._instances:
+            n += 1
+        new_id = f"instance_{n}"
+        new_params = dict(src["params"])
+        old_port = src["params"].get("port", "8082")
+        try:
+            new_params["port"] = str(int(old_port) + 1)
+        except ValueError:
+            new_params["port"] = "8083"
+        self._instances[new_id] = {
+            "id": new_id,
+            "name": f"{src['name']} (副本)",
+            "params": new_params,
+            "engine_dir": src.get("engine_dir", ""),
+            "ctx_size_auto": src.get("ctx_size_auto", False),
+            "custom_arguments": list(src.get("custom_arguments", [])),
+            "process": None,
+            "is_running": False,
+            "health_active": False,
+            "running_port": "",
+            "running_host": "",
+            "running_pid": "",
+        }
+        self._switch_to_instance(new_id)
+        self._refresh_instance_tree()
+        self._refresh_instance_combo()
+        self.scan_engines()
+        self.scan_downloaded_models()
+        Messagebox.ok(
+            f"已克隆实例「{src['name']}」为「{self._instances[new_id]['name']}」\n"
+            f"端口已自动 +1。",
+            "克隆成功", parent=self.root)
+
+    def _instance_rename(self):
+        sel = self.instance_tree.selection()
+        if not sel:
+            return
+        inst_id = sel[0]
+        if inst_id not in self._instances:
+            return
+        inst = self._instances[inst_id]
+        dialog = ttk.Toplevel(self.root)
+        dialog.title("重命名实例")
+        dialog.geometry("350x130")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        ttk.Label(dialog, text="新实例名称:", padding="10 10 0 5").pack(anchor=tk.W)
+        name_var = tk.StringVar(value=inst["name"])
+        entry = ttk.Entry(dialog, textvariable=name_var, width=30)
+        entry.pack(padx=10, pady=5, fill=tk.X)
+        entry.focus_set()
+        entry.selection_range(0, tk.END)
+        def do_rename():
+            n = name_var.get().strip()
+            if n:
+                if any(v["name"] == n and k != inst_id for k, v in self._instances.items()):
+                    Messagebox.show_warning("该名称已被其他实例使用。", "重复名称", parent=dialog)
+                    return
+                dialog.destroy()
+                inst["name"] = n
+                self._refresh_instance_tree()
+                self._refresh_instance_combo()
+                self._sync_bottom_bar_for_active_instance()
+                self._auto_save_instances()
+            else:
+                Messagebox.show_error("名称不能为空！", "错误", parent=dialog)
+        entry.bind('<Return>', lambda e: do_rename())
+        entry.bind('<Escape>', lambda e: dialog.destroy())
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="确定", command=do_rename, bootstyle="success").pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="取消", command=dialog.destroy, bootstyle="secondary").pack(side=tk.LEFT, padx=5)
+
+    def _instance_delete(self):
+        sel = self.instance_tree.selection()
+        if sel:
+            inst_id = sel[0]
+        else:
+            inst_id = self._active_instance_id
+        if not inst_id or inst_id not in self._instances:
+            return
+        inst = self._instances[inst_id]
+        if inst.get("is_running"):
+            Messagebox.show_warning("无法删除正在运行的实例。请先停止该实例。", "提示", parent=self.root)
+            return
+        if len(self._instances) <= 1:
+            Messagebox.show_warning("至少保留一个实例。", "提示", parent=self.root)
+            return
+        reply = tk.messagebox.askokcancel(
+            "确认删除",
+            f"确定删除实例「{inst['name']}」？\n此操作不可撤销。",
+            parent=self.root
+        )
+        if not reply:
+            return
+        del self._instances[inst_id]
+        if self._active_instance_id == inst_id:
+            new_active = next(iter(self._instances.keys()))
+            self._switch_to_instance(new_active)
+        self._refresh_instance_tree()
+        self._refresh_instance_combo()
+        self._auto_save_instances()
+        self.root.update()
+
+    def _set_run_lock(self, locked):
+        state = tk.DISABLED if locked else tk.NORMAL
+        def _set_state_recursive(widget, st):
+            try:
+                widget.config(state=st)
+            except tk.TclError:
+                pass
+            for child in widget.winfo_children():
+                _set_state_recursive(child, st)
+        for frame in getattr(self, '_param_frames', []):
+            try:
+                _set_state_recursive(frame, state)
+                txt = frame.cget('text')
+                if locked and ' 🔒' not in txt:
+                    frame.config(text=txt + ' 🔒')
+                elif not locked:
+                    frame.config(text=txt.replace(' 🔒', ''))
+            except Exception:
+                pass
+        if hasattr(self, 'instance_combo'):
+            self.instance_combo.config(state=tk.DISABLED if locked else tk.NORMAL)
+        if locked:
+            inst = self._instances.get(self._active_instance_id)
+            if inst:
+                self.start_button.config(text=f"▶ {inst['name']}")
+        else:
+            self.start_button.config(text="▶ 启动")
+
+    def _check_port_conflict(self, port, exclude_instance=None):
+        for inst_id, inst in self._instances.items():
+            if inst_id == exclude_instance:
+                continue
+            if not inst.get("is_running"):
+                continue
+            rp = inst.get("running_port", "")
+            if rp and rp == str(port):
+                return inst_id
+        return None
+
+
 def resource_path(filename):
     """Get absolute path to resource, works for dev and for PyInstaller bundle"""
     if getattr(sys, 'frozen', False):
