@@ -14,7 +14,7 @@ def build_executable():
     # Define the build arguments
     args = [
         'llama-server_gui_new.py',              # Main script
-        '--onefile',                    # Create single executable
+        '--onedir',                     # Create directory mode (no temp dir, no cleanup warning)
         '--windowed',                   # No console window (GUI app)
         '--name=LLaMA-Server-GUI',      # Name of the executable
         '--icon=llama-cpp.ico',         # Icon file (if exists)

@@ -26,7 +26,7 @@ except ImportError:
     TRAY_AVAILABLE = False
 
 # Application version
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 
 class LlamaServerGUI:
     def __init__(self, root):
@@ -43,8 +43,8 @@ class LlamaServerGUI:
         self.tray_icon = None
         self.is_in_tray = False
 
-        # Use user's directory for portable config file
-        self.config_file = self.get_config_path("llama_server_config.json")
+        # Use user's directory for portable config file in configs/ subdirectory
+        self.config_file = self._get_configs_path("instances.json")
         
         # ModelScope download root (empty = default: {app_dir}/models/)
         self.ms_download_root = ""
@@ -110,14 +110,19 @@ class LlamaServerGUI:
 
     def get_config_path(self, filename):
         """Get the path for config file that works with PyInstaller."""
+        return os.path.join(self._get_app_dir(), filename)
+
+    def _get_app_dir(self):
+        """Application root directory (where exe lives)."""
         if getattr(sys, 'frozen', False):
-            # Running as compiled executable
-            app_dir = os.path.dirname(sys.executable)
-        else:
-            # Running as script
-            app_dir = os.path.dirname(os.path.abspath(__file__))
-        
-        return os.path.join(app_dir, filename)
+            return os.path.dirname(sys.executable)
+        return os.path.dirname(os.path.abspath(__file__))
+
+    def _get_configs_path(self, filename):
+        """Get path for a config file in the configs/ subdirectory."""
+        d = os.path.join(self._get_app_dir(), 'configs')
+        os.makedirs(d, exist_ok=True)
+        return os.path.join(d, filename)
 
 
     # ── 统一参数注册表 (单一数据源，取代 generate_command/save_config/load_config 三处重复) ──
@@ -2732,20 +2737,30 @@ class LlamaServerGUI:
         command_str = " ".join(f'"{arg}"' if " " in arg else arg for arg in cmd)
         self.update_output(f"▶ Starting server with command:\n{command_str}\n\n" + "="*80 + "\n")
         
+        # Popen on main thread so running_pid is set before _auto_save_instances
+        startupinfo = None
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        try:
+            process = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                universal_newlines=False, bufsize=1, startupinfo=startupinfo
+            )
+        except FileNotFoundError:
+            self.update_output("\n⚠ 错误：找不到 llama-server 可执行文件，请确保它在 PATH 或同目录下。\n")
+            self.server_stopped()
+            return
+        except Exception as e:
+            self.update_output(f"\n⚠ 启动服务器错误：{e}\n")
+            self.server_stopped()
+            return
+        
+        inst["process"] = process
+        inst["running_pid"] = str(process.pid)
+        
         def run_server():
             try:
-                startupinfo = None
-                if os.name == 'nt':
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-
-                process = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    universal_newlines=False, bufsize=1, startupinfo=startupinfo
-                )
-                inst["process"] = process
-                inst["running_pid"] = str(process.pid)
-                
                 for line_bytes in iter(process.stdout.readline, b''):
                     try:
                         line = line_bytes.decode('utf-8')
@@ -2754,12 +2769,8 @@ class LlamaServerGUI:
                     self.root.after(0, self.update_output, line)
                 process.wait()
                 self.root.after(0, self.server_stopped)
-                
-            except FileNotFoundError:
-                self.root.after(0, self.update_output, "\n⚠ 错误：找不到 llama-server 可执行文件，请确保它在 PATH 或同目录下。\n")
-                self.root.after(0, self.server_stopped)
             except Exception as e:
-                self.root.after(0, self.update_output, f"\n⚠ 启动服务器错误：{e}\n")
+                self.root.after(0, self.update_output, f"\n⚠ 服务器输出读取错误：{e}\n")
                 self.root.after(0, self.server_stopped)
         
         threading.Thread(target=run_server, daemon=True).start()
@@ -2798,32 +2809,71 @@ class LlamaServerGUI:
             return
         if not inst.get("is_running", False):
             return
-        # Try process object first
+        
+        port = inst.get("running_port", "") or inst.get("params", {}).get("port", "")
+        killed = False
+        
+        # Window-hiding startupinfo for subprocess calls
+        startupinfo = None
+        if os.name == 'nt':
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        
+        # Method 1: process object (for instances started in this session)
         proc = inst.get("process")
         if proc:
             try:
                 proc.terminate()
+                proc.wait(timeout=5)
+                killed = True
                 self.update_output("\n" + "="*80 + "\n⏹️ 正在停止服务器...\n")
             except Exception as e:
-                self.update_output(f"\n⚠ 停止服务器错误：{e}\n")
-        else:
-            # Try PID recovery
+                self.update_output(f"\n⚠ 终止进程对象失败：{e}，尝试 PID 方式...\n")
+        
+        # Method 2: PID-based kill (for PID-recovered instances)
+        if not killed:
             pid = inst.get("running_pid", "")
             if pid:
                 try:
-                    subprocess.run(
-                        ["powershell", "-Command", f"Stop-Process -Id {pid} -Force"],
-                        capture_output=True, timeout=5
+                    r = subprocess.run(
+                        ["taskkill", "/F", "/PID", str(pid)],
+                        capture_output=True, timeout=5, startupinfo=startupinfo
                     )
-                    self.update_output(f"\n⏹️ 已通过 PID {pid} 终止进程\n")
+                    if r.returncode == 0:
+                        killed = True
+                        self.update_output(f"\n⏹️ 已通过 PID {pid} 终止进程\n")
+                    else:
+                        err = r.stderr.decode('utf-8', errors='replace').strip()
+                        self.update_output(f"\n⚠ PID {pid} 终止失败: {err}\n")
                 except Exception as e:
-                    self.update_output(f"\n⚠ 无法终止进程 PID {pid}：{e}\n")
-        # Clear run state
+                    self.update_output(f"\n⚠ PID {pid} 终止异常：{e}\n")
+        
+        # Method 3: port-based fallback (find any process on the instance's port)
+        if not killed and port:
+            try:
+                r = subprocess.run(
+                    ["powershell", "-NoProfile", "-Command",
+                     f"try{{$p=Get-NetTCPConnection -LocalPort {port} -ErrorAction Stop|Select-Object -First 1 -ExpandProperty OwningProcess;Stop-Process -Id $p -Force;Write-Output $p}}catch{{}}"],
+                    capture_output=True, timeout=5, startupinfo=startupinfo
+                )
+                out = r.stdout.decode('utf-8', errors='replace').strip()
+                if out:
+                    killed = True
+                    self.update_output(f"\n⏹️ 已通过端口 {port} 终止进程 (PID {out})\n")
+                else:
+                    self.update_output(f"\n⚠ 端口 {port} 上未发现监听进程\n")
+            except Exception as e:
+                self.update_output(f"\n⚠ 端口 {port} 查杀异常：{e}\n")
+        
+        if not killed:
+            self.update_output("\n⚠ 无法终止进程，请手动检查后台进程。\n", tag="error")
+            return
+        
+        # Clear run state (only after successful kill)
         inst["is_running"] = False
         inst["process"] = None
         inst["running_pid"] = ""
         inst["health_active"] = False
-        # Kill the _monitor_active flag (global fallback)
         self._health_check_active = False
         self._refresh_instance_tree()
         self._sync_bottom_bar_for_active_instance()
@@ -2994,7 +3044,7 @@ class LlamaServerGUI:
     def _auto_save_instances(self):
         try:
             config = self._build_global_config()
-            self.config_file = self.get_config_path("instances.json")
+            self.config_file = self._get_configs_path("instances.json")
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(config, f, ensure_ascii=False, indent=2)
         except Exception as e:
@@ -3002,9 +3052,15 @@ class LlamaServerGUI:
     
     def load_config(self, path=None, browse=False):
         if path is None:
-            path = self.get_config_path("instances.json")
+            path = self._get_configs_path("instances.json")
+        # Migration: check old location (app dir) and copy to configs/
         if not os.path.isfile(path):
-            # Try old format migration
+            old_loc = self.get_config_path("instances.json")
+            if os.path.isfile(old_loc):
+                import shutil
+                shutil.copy2(old_loc, path)
+        if not os.path.isfile(path):
+            # Try old format migration (llama_server_config.json in app dir)
             old_path = self.get_config_path("llama_server_config.json")
             if os.path.isfile(old_path):
                 try:
@@ -3138,7 +3194,7 @@ class LlamaServerGUI:
         self._is_switching = False
 
     def _get_logs_dir(self):
-        d = os.path.join(os.path.dirname(self.config_file), "logs")
+        d = os.path.join(self._get_app_dir(), "logs")
         os.makedirs(d, exist_ok=True)
         return d
 
