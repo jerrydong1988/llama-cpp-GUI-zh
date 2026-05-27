@@ -1,7 +1,6 @@
 import sys
 import tkinter as tk
 import ttkbootstrap as ttk
-from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from ttkbootstrap.scrolled import ScrolledText, ScrolledFrame
 from ttkbootstrap.tooltip import ToolTip
@@ -18,6 +17,8 @@ import time
 import re
 from functools import lru_cache
 from collections import deque
+import signal
+import locale
 
 try:
     import pystray
@@ -28,7 +29,7 @@ except ImportError:
     TRAY_AVAILABLE = False
 
 # Application version
-__version__ = "1.8.0"
+__version__ = "1.9.1"
 
 class LlamaServerGUI:
     def __init__(self, root):
@@ -38,8 +39,9 @@ class LlamaServerGUI:
         self.root.minsize(1080, 720)
 
         # Server process management
-        self.server_process = None
         self.is_running = False
+        # System encoding for subprocess output decoding (cross-platform)
+        self._sys_encoding = locale.getpreferredencoding() or 'utf-8'
 
         # System tray setup
         self.tray_icon = None
@@ -234,7 +236,7 @@ class LlamaServerGUI:
     # Param keys (from _PARAM_DEFS) to skip in generate_command when --embedding is on
     _EMBEDDING_SKIP_PARAMS = frozenset({
         'lora_path', 'mmproj_path', 'grammar_file',
-        'chat_template', 'reasoning_format', 'reasoning_effort',
+        'chat_template', 'reasoning_format',
         'reasoning', 'jinja', 'reasoning_budget',
         'n_predict', 'ignore_eos', 'json_schema',
         'temp', 'top_k', 'top_p', 'repeat_penalty', 'min_p',
@@ -245,6 +247,16 @@ class LlamaServerGUI:
         'moe_cpu_layers',
         'context_shift',
     })
+
+    @staticmethod
+    def _set_state_recursive(widget, state):
+        """Recursively enable/disable a widget tree."""
+        try:
+            widget.config(state=state)
+        except tk.TclError:
+            pass
+        for child in widget.winfo_children():
+            LlamaServerGUI._set_state_recursive(child, state)
 
     def _set_embedding_mode(self, enabled: bool):
         """Enable/disable UI controls for embedding mode."""
@@ -259,19 +271,10 @@ class LlamaServerGUI:
         if enabled and hasattr(self, 'pooling') and not self.pooling.get():
             self.pooling.set('mean')
 
-        # 3. Recursive disable helper
-        def _set_state_recursive(widget, st):
-            try:
-                widget.config(state=st)
-            except tk.TclError:
-                pass
-            for child in widget.winfo_children():
-                _set_state_recursive(child, st)
-
-        # 4. Toggle registered Labelframes
+        # 3. Toggle registered Labelframes
         for frame in self._embedding_frames:
             try:
-                _set_state_recursive(frame, state)
+                self._set_state_recursive(frame, state)
                 frame.config(text=frame['text'].replace(' 🛑', '') + (' 🛑' if enabled else ''))
             except Exception:
                 pass
@@ -395,7 +398,6 @@ class LlamaServerGUI:
         self.nav_tree.bind("<<TreeviewSelect>>", self._on_nav_select)
         # Refresh instance display after UI is fully set up
         self.root.after(150, self._refresh_instance_tree)
-        self.root.after(200, self._refresh_instance_combo)
         self.root.after(250, self._sync_bottom_bar_for_active_instance)
         
         # Right: Content area (panels stacked, one visible at a time)
@@ -409,6 +411,20 @@ class LlamaServerGUI:
             self._panels[iid] = panel
             # Populate via the original setup method
             getattr(self, method)(panel)
+        
+        # Collect Labelframes from parameter tabs for run-lock
+        self._param_frames = []
+        for pid in ('models', 'gen', 'perf', 'advanced', 'api'):
+            if pid not in self._panels:
+                continue
+            panel = self._panels[pid]
+            stack = [panel]
+            while stack:
+                child = stack.pop()
+                for c in child.winfo_children():
+                    if isinstance(c, ttk.Labelframe):
+                        self._param_frames.append(c)
+                    stack.append(c)
         
         # Show first panel by default
         first_iid = 'instances'  # Show instance panel by default
@@ -451,7 +467,6 @@ class LlamaServerGUI:
             # Refresh instance tree whenever navigating to it
             if panel_id == "instances" and hasattr(self, '_refresh_instance_tree'):
                 self._refresh_instance_tree()
-                self._refresh_instance_combo()
                 inst = self._instances.get(self._active_instance_id)
                 if inst and hasattr(self, '_set_run_lock'):
                     self._set_run_lock(inst.get("is_running", False))
@@ -730,7 +745,7 @@ class LlamaServerGUI:
         self.spec_draft_n_min = tk.StringVar(value="")
         self.create_spinbox(spec_group, "最小草稿令牌数 (--spec-draft-n-min):", self.spec_draft_n_min, "推测解码最小草稿令牌数（默认 0）。", row=3, from_=0, to=512, increment=1)
         self.spec_type = tk.StringVar()
-        spec_types = ["", "none", "draft-mtp", "draft-simple", "draft-eagle3", "ngram-cache", "ngram-simple", "ngram-map-k", "ngram-map-k4v", "ngram-mod"]
+        spec_types = ["", "none", "mtp", "draft-mtp", "draft-simple", "draft-eagle3", "ngram-cache", "ngram-simple", "ngram-map-k", "ngram-map-k4v", "ngram-mod"]
         self.create_combobox(spec_group, "推测解码类型 (--spec-type):", self.spec_type, "推测解码类型。无草稿模型时（模型自带MTP头）可选：none / ngram-cache / ngram-mod 等；有草稿模型时（-md 指定）可选：draft-mtp / draft-simple / draft-eagle3。可组合多个，用逗号分隔。", spec_types, row=4)
         # (草稿模型下载已整合到「模型」标签页的 ModelScope 区域)
         # --- Server Reliability ---
@@ -756,7 +771,7 @@ class LlamaServerGUI:
 
         # --- Network Configuration ---
         net_group = ttk.Labelframe(parent, text="网络配置", padding="10")
-        net_group.grid(row=0, column=0, sticky=EW, pady=5)
+        net_group.grid(row=0, column=0, sticky=tk.EW, pady=5)
         net_group.columnconfigure(1, weight=1)
         self.host = tk.StringVar(value="127.0.0.1")
         self.create_entry(net_group, "主机 (--host):", self.host, "监听的 IP 地址（0.0.0.0 允许网络访问）。", row=0)
@@ -769,7 +784,7 @@ class LlamaServerGUI:
 
         # --- Access & Features ---
         access_group = ttk.Labelframe(parent, text="访问与功能", padding="10")
-        access_group.grid(row=1, column=0, sticky=EW, pady=5)
+        access_group.grid(row=1, column=0, sticky=tk.EW, pady=5)
         access_group.columnconfigure(1, weight=1)
         self.api_key = tk.StringVar()
         self.create_entry(access_group, "API 密钥 (--api-key):", self.api_key, "API 密钥，用于令牌认证（可选）。", row=0)
@@ -791,27 +806,27 @@ class LlamaServerGUI:
 
         # --- Custom Arguments Management ---
         custom_group = ttk.Labelframe(parent, text="自定义参数管理", padding="10")
-        custom_group.grid(row=2, column=0, sticky=NSEW, pady=5)
+        custom_group.grid(row=2, column=0, sticky=tk.NSEW, pady=5)
         custom_group.columnconfigure(0, weight=1)
         custom_group.rowconfigure(1, weight=1)
 
         # Input for new argument
         add_arg_frame = ttk.Frame(custom_group)
-        add_arg_frame.grid(row=0, column=0, sticky=EW, pady=(0, 10))
+        add_arg_frame.grid(row=0, column=0, sticky=tk.EW, pady=(0, 10))
         add_arg_frame.columnconfigure(0, weight=1)
         self.new_arg_entry = ttk.Entry(add_arg_frame)
-        self.new_arg_entry.grid(row=0, column=0, sticky=EW, padx=(0, 5))
+        self.new_arg_entry.grid(row=0, column=0, sticky=tk.EW, padx=(0, 5))
         ToolTip(self.new_arg_entry, "输入完整参数及其值（例如 --my-flag value），然后点击添加。")
         add_button = ttk.Button(add_arg_frame, text="添加", command=self.add_custom_argument, bootstyle="success-outline")
-        add_button.grid(row=0, column=1, sticky=E)
+        add_button.grid(row=0, column=1, sticky=tk.E)
 
         # Scrollable list for existing arguments
         self.custom_args_list_frame = ScrolledFrame(custom_group, autohide=True, bootstyle="round")
-        self.custom_args_list_frame.grid(row=1, column=0, sticky=NSEW)
+        self.custom_args_list_frame.grid(row=1, column=0, sticky=tk.NSEW)
         
         # Other options below the list
         other_options_frame = ttk.Frame(custom_group)
-        other_options_frame.grid(row=2, column=0, sticky=EW, pady=(10, 0))
+        other_options_frame.grid(row=2, column=0, sticky=tk.EW, pady=(10, 0))
         self.verbose = tk.BooleanVar(value=False)
         verbose_cb = ttk.Checkbutton(other_options_frame, text="详细日志 (-v)", variable=self.verbose, bootstyle="round-toggle")
         verbose_cb.pack(side=tk.LEFT)
@@ -1376,7 +1391,7 @@ class LlamaServerGUI:
         self.engine_add_btn = ttk.Button(toolbar, text="➕ 添加引擎目录", 
             command=self.engine_add_directory, bootstyle="info")
         self.engine_add_btn.pack(side=tk.LEFT)
-        ToolTip(self.engine_add_btn, "选择一个包含 llama-server.exe 的目录。")
+        ToolTip(self.engine_add_btn, f"选择一个包含 {self._exe_name('llama-server')} 的目录。")
         
         # Engine list (using Treeview for single-column list with icons)
         list_frame = ttk.Frame(list_container)
@@ -1484,7 +1499,7 @@ class LlamaServerGUI:
             if norm not in seen_dirs:
                 exe_path = os.path.join(eng_dir, self._exe_name())
                 if os.path.isfile(exe_path):
-                    name = os.path.basename(eng_dir.rstrip('/\\'))
+                    name = os.path.basename(os.path.normpath(eng_dir))
                     eng_info = self._get_engine_info(name, eng_dir, exe_path, '自定义')
                     engines.append(eng_info)
                     seen_dirs.add(norm)
@@ -1583,20 +1598,23 @@ class LlamaServerGUI:
         eng = self.engine_tree_items.get(iid)
         if eng:
             self._show_engine_detail(eng)
-            # Auto-select as default engine on click (replaces need for explicit "设为默认")
+                # Auto-select as default engine on click (replaces need for explicit "设为默认")
             if os.path.normcase(eng['dir']) != os.path.normcase(self.selected_engine_dir):
                 self.selected_engine_dir = eng['dir']
-                # Update tree markers to reflect new default
-                for child in self.engine_tree.get_children():
-                    e = self.engine_tree_items.get(child)
-                    if not e:
-                        continue
-                    is_default = os.path.normcase(e['dir']) == os.path.normcase(self.selected_engine_dir)
-                    marker = "⭐ " if is_default else "  "
-                    icon = "🖥" if 'ROCm' in e.get('version', '') or 'hip' in e.get('name', '').lower() else "⚡"
-                    label = f"{e['name']}  [默认]" if is_default else e['name']
-                    self.engine_tree.item(child, text=f"{marker}{icon}  {label}",
-                        tags=('default',) if is_default else ())
+                self._refresh_engine_tree_markers()
+    
+    def _refresh_engine_tree_markers(self):
+        """Update engine tree icons, markers, and default tags."""
+        for child in self.engine_tree.get_children():
+            e = self.engine_tree_items.get(child)
+            if not e:
+                continue
+            is_default = os.path.normcase(e['dir']) == os.path.normcase(self.selected_engine_dir)
+            marker = "⭐ " if is_default else "  "
+            icon = "🖥" if 'ROCm' in e.get('version', '') or 'hip' in e.get('name', '').lower() else "⚡"
+            label = f"{e['name']}  [默认]" if is_default else e['name']
+            self.engine_tree.item(child, text=f"{marker}{icon}  {label}",
+                tags=('default',) if is_default else ())
     
     def engine_set_default(self):
         """Set the selected engine as default."""
@@ -1609,20 +1627,7 @@ class LlamaServerGUI:
             return
         
         self.selected_engine_dir = eng['dir']
-        
-        # Update tree markers and tags
-        for child in self.engine_tree.get_children():
-            e = self.engine_tree_items.get(child)
-            if not e:
-                continue
-            is_default = os.path.normcase(e['dir']) == os.path.normcase(self.selected_engine_dir)
-            marker = "⭐ " if is_default else "  "
-            icon = "🖥" if 'ROCm' in e.get('version', '') or 'hip' in e.get('name', '').lower() else "⚡"
-            label = f"{e['name']}  [默认]" if is_default else e['name']
-            self.engine_tree.item(child,
-                text=f"{marker}{icon}  {label}",
-                tags=('default',) if is_default else ())
-        
+        self._refresh_engine_tree_markers()
         self.engine_status_var.set(f"✅ 默认引擎：{eng['name']}")
         Messagebox.ok(f"默认引擎已设为：\n{eng['dir']}", "已设置", parent=self.root)
     
@@ -1630,7 +1635,7 @@ class LlamaServerGUI:
         """Browse and add an engine directory."""
         app_dir = os.path.dirname(self.get_config_path(''))
         chosen = filedialog.askdirectory(
-            title="选择包含 llama-server.exe 的目录",
+            title=f"选择包含 {self._exe_name('llama-server')} 的目录",
             initialdir=app_dir
         )
         if not chosen:
@@ -1638,7 +1643,7 @@ class LlamaServerGUI:
         
         exe_path = os.path.join(chosen, self._exe_name())
         if not os.path.isfile(exe_path):
-            Messagebox.show_error("所选目录中没有找到 llama-server.exe！", "错误", parent=self.root)
+            Messagebox.show_error(f"所选目录中没有找到 {self._exe_name('llama-server')}！", "错误", parent=self.root)
             return
         
         name = os.path.basename(chosen)
@@ -1699,7 +1704,7 @@ class LlamaServerGUI:
             self._open_file_explorer(eng['dir'])
     
     def engine_get_path(self):
-        """Get the full path to llama-server.exe for the selected engine.
+        """Get the full path to the llama-server binary for the selected engine.
         Returns None if using system PATH."""
         if self.selected_engine_dir:
             exe_path = os.path.join(self.selected_engine_dir, self._exe_name())
@@ -1923,7 +1928,8 @@ class LlamaServerGUI:
         repo_dir = self._ms_get_repo_dir()
         os.makedirs(repo_dir, exist_ok=True)
         
-        # Check existing files
+        # Check existing files — skip those user declines to overwrite
+        remaining = []
         for fi in files_to_dl:
             save_path = os.path.join(repo_dir, fi['path'])
             if os.path.exists(save_path):
@@ -1932,7 +1938,11 @@ class LlamaServerGUI:
                     f"文件 {fi['name']} 已存在于\n{save_path}\n是否覆盖？",
                     parent=self.root)
                 if not reply:
-                    return
+                    continue
+            remaining.append(fi)
+        if not remaining:
+            return
+        files_to_dl = remaining
         
         # Setup cancel event
         self._ms_cancel_event = threading.Event()
@@ -2020,13 +2030,6 @@ class LlamaServerGUI:
         self.ms_progress['value'] = 0
         self.ms_progress_label.config(text="⏹ 已取消")
         self.ms_status_var.set("⏹ 下载已取消")
-        # Clean up all completed files from this batch
-        for fi_path in list(self._ms_dl_results.values()):
-            if os.path.exists(fi_path):
-                try:
-                    os.remove(fi_path)
-                except OSError:
-                    pass
         # Clean up all .tmp files in the download directory
         if os.path.exists(self._ms_dl_dir):
             for root, dirs, files in os.walk(self._ms_dl_dir):
@@ -2051,13 +2054,6 @@ class LlamaServerGUI:
                 os.remove(partial_path)
             except OSError:
                 pass
-        # Clean up already-downloaded files from this batch
-        for fi_path in list(self._ms_dl_results.values()):
-            if os.path.exists(fi_path):
-                try:
-                    os.remove(fi_path)
-                except OSError:
-                    pass
     
     def _update_dl_progress(self, pct, downloaded, total, filename):
         self.ms_progress['value'] = pct
@@ -2129,7 +2125,7 @@ class LlamaServerGUI:
         
         def fetch():
             try:
-                url = f"https://www.modelscope.cn/api/v1/models/{repo}/repo/files"
+                url = f"https://www.modelscope.cn/api/v1/models/{repo}/repo/files?Recursive=true"
                 req = urllib.request.Request(url)
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
@@ -2714,9 +2710,14 @@ class LlamaServerGUI:
             cmd.extend(["--numa", "distribute"])
         
         # custom arguments (user-defined, not in PARAM_DEFS)
+        _dangerous_re = re.compile(r'[;|&$`@!(){}<>]')
         for arg_item in self.custom_arguments:
             if arg_item.get("enabled", False) and arg_item.get("value", "").strip():
-                cmd.extend(arg_item["value"].strip().split())
+                val = arg_item["value"].strip()
+                if _dangerous_re.search(val):
+                    self.update_output(f"[警告] 自定义参数含危险字符已跳过: {val}\n", tag="error")
+                    continue
+                cmd.extend(val.split())
         
         return cmd
 
@@ -2769,36 +2770,41 @@ class LlamaServerGUI:
             )
         except FileNotFoundError:
             self.update_output("\n⚠ 错误：找不到 llama-server 可执行文件，请确保它在 PATH 或同目录下。\n")
-            self.server_stopped()
+            self.server_stopped(self._active_instance_id)
             return
         except Exception as e:
             self.update_output(f"\n⚠ 启动服务器错误：{e}\n")
-            self.server_stopped()
+            self.server_stopped(self._active_instance_id)
             return
         
         inst["process"] = process
         inst["running_pid"] = str(process.pid)
+        stopped_inst_id = self._active_instance_id
         
         def run_server():
             try:
                 for line_bytes in iter(process.stdout.readline, b''):
                     try:
-                        line = line_bytes.decode('utf-8')
+                        line = line_bytes.decode(self._sys_encoding)
                     except UnicodeDecodeError:
                         line = line_bytes.decode('latin-1', errors='replace')
                     self.root.after(0, self.update_output, line)
-                process.wait()
-                self.root.after(0, self.server_stopped)
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+                self.root.after(0, lambda sid=stopped_inst_id: self.server_stopped(sid))
             except Exception as e:
                 self.root.after(0, self.update_output, f"\n⚠ 服务器输出读取错误：{e}\n")
-                self.root.after(0, self.server_stopped)
+                self.root.after(0, lambda sid=stopped_inst_id: self.server_stopped(sid))
         
         threading.Thread(target=run_server, daemon=True).start()
         
         inst["is_running"] = True
         inst["running_port"] = params.get("port", "8080")
         inst["running_host"] = params.get("host", "127.0.0.1")
-        self._health_check_active = True
+        self.is_running = True
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
         self.browser_button.config(state=tk.NORMAL)
@@ -2813,10 +2819,11 @@ class LlamaServerGUI:
         health_host = inst["running_host"]
         if health_host == '0.0.0.0': health_host = 'localhost'
         health_port = inst["running_port"]
+        health_inst_id = self._active_instance_id
         
         # Start health monitor thread
         threading.Thread(target=self._health_check_loop,
-            args=(health_host, health_port), daemon=True).start()
+            args=(health_host, health_port, health_inst_id), daemon=True).start()
         
         self._refresh_instance_tree()
         self._sync_bottom_bar_for_active_instance()
@@ -2851,16 +2858,21 @@ class LlamaServerGUI:
             pid = inst.get("running_pid", "")
             if pid:
                 try:
-                    r = subprocess.run(
-                        ["taskkill", "/F", "/PID", str(pid)],
-                        capture_output=True, timeout=5, startupinfo=startupinfo
-                    )
-                    if r.returncode == 0:
+                    if self._is_windows():
+                        r = subprocess.run(
+                            ["taskkill", "/F", "/PID", str(pid)],
+                            capture_output=True, timeout=5, startupinfo=startupinfo
+                        )
+                        if r.returncode == 0:
+                            killed = True
+                            self.update_output(f"\n⏹️ 已通过 PID {pid} 终止进程\n")
+                        else:
+                            err = r.stderr.decode(self._sys_encoding, errors='replace').strip()
+                            self.update_output(f"\n⚠ PID {pid} 终止失败: {err}\n")
+                    else:
+                        os.kill(int(pid), signal.SIGTERM)
                         killed = True
                         self.update_output(f"\n⏹️ 已通过 PID {pid} 终止进程\n")
-                    else:
-                        err = r.stderr.decode('utf-8', errors='replace').strip()
-                        self.update_output(f"\n⚠ PID {pid} 终止失败: {err}\n")
                 except Exception as e:
                     self.update_output(f"\n⚠ PID {pid} 终止异常：{e}\n")
         
@@ -2873,14 +2885,13 @@ class LlamaServerGUI:
                          f"try{{$p=Get-NetTCPConnection -LocalPort {port} -ErrorAction Stop|Select-Object -First 1 -ExpandProperty OwningProcess;Stop-Process -Id $p -Force;Write-Output $p}}catch{{}}"],
                         capture_output=True, timeout=5, startupinfo=startupinfo
                     )
-                    out = r.stdout.decode('utf-8', errors='replace').strip()
+                    out = r.stdout.decode(self._sys_encoding, errors='replace').strip()
                 else:
-                    import signal
                     r = subprocess.run(
                         ["lsof", "-ti", f"-i:{port}"],
                         capture_output=True, timeout=5
                     )
-                    pids = r.stdout.decode('utf-8', errors='replace').strip().split()
+                    pids = r.stdout.decode(self._sys_encoding, errors='replace').strip().split()
                     out = ""
                     for pid in pids:
                         if pid:
@@ -2909,21 +2920,21 @@ class LlamaServerGUI:
             inst["process"] = None
             inst["running_pid"] = ""
             inst["health_active"] = False
-        self._health_check_active = False
+        self.is_running = any(inst.get("is_running") for inst in self._instances.values())
         self._refresh_instance_tree()
         self._sync_bottom_bar_for_active_instance()
         self._auto_save_instances()
-
-    def server_stopped(self):
+    
+    def server_stopped(self, inst_id=None):
+        inst_id = inst_id or self._active_instance_id
         with self._instances_lock:
-            inst = self._instances.get(self._active_instance_id)
+            inst = self._instances.get(inst_id)
             if inst:
                 inst["is_running"] = False
                 inst["process"] = None
                 inst["running_pid"] = ""
                 inst["health_active"] = False
-        self.is_running = False
-        self._health_check_active = False
+        self.is_running = any(inst.get("is_running") for inst in self._instances.values())
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
         self.browser_button.config(state=tk.DISABLED)
@@ -2983,9 +2994,11 @@ class LlamaServerGUI:
             self._instance_logs[inst_id].append((text, tag))
             self._append_instance_log_file(inst_id, text, tag)
     
-    def _monitor_loop(self, url, interval=5):
-        """Continuous health monitoring — ping every `interval` seconds."""
-        while self.is_running:
+    def _monitor_loop(self, url, interval=5, inst_id=None):
+        """Continuous health monitoring — ping every `interval` seconds.
+        Uses per-instance running flag when inst_id is provided."""
+        is_active = lambda: self._instances.get(inst_id, {}).get("is_running", False) if inst_id else self.is_running
+        while is_active():
             time.sleep(interval)
             try:
                 req = urllib.request.Request(url)
@@ -2998,14 +3011,16 @@ class LlamaServerGUI:
                 self.root.after(0, self._set_server_unhealthy)
                 time.sleep(3)
 
-    def _health_check_loop(self, host, port):
+    def _health_check_loop(self, host, port, inst_id):
         """Periodically ping the server's health endpoint.
-        Waits indefinitely for the model to load — no false timeout for large models."""
+        Waits indefinitely for the model to load — no false timeout for large models.
+        Uses per-instance running flag for thread-safe sentinel."""
         url = f"http://{host}:{port}/health"
+        _is_still_active = lambda: self._instances.get(inst_id, {}).get("is_running", False)
         
         # Phase 1: Quick retry (every 1s, first 30 attempts)
         for attempt in range(1, 31):
-            if not self.is_running:
+            if not _is_still_active():
                 return
             try:
                 req = urllib.request.Request(url)
@@ -3014,7 +3029,7 @@ class LlamaServerGUI:
                     elapsed = int((time.time() - start) * 1000)
                     if resp.status == 200:
                         self.root.after(0, lambda ms=elapsed: self._set_server_healthy(ms))
-                        self._monitor_loop(url)
+                        self._monitor_loop(url, inst_id=inst_id)
                         return
             except Exception:
                 if attempt == 1:
@@ -3023,7 +3038,7 @@ class LlamaServerGUI:
         
         # Phase 2: Extended wait — model is still loading (every 3s)
         self.root.after(0, lambda: self.server_status_var.set("⏳ 启动中（模型加载中…）"))
-        while self.is_running:
+        while _is_still_active():
             time.sleep(3)
             try:
                 req = urllib.request.Request(url)
@@ -3062,11 +3077,12 @@ class LlamaServerGUI:
 
     def _build_global_config(self):
         config = {"version": 2, "instances": {}}
-        for inst_id, inst in self._instances.items():
-            data = dict(inst)
-            data.pop("process", None)
-            data.pop("_logs", None)
-            config["instances"][inst_id] = data
+        with self._instances_lock:
+            for inst_id, inst in list(self._instances.items()):
+                data = dict(inst)
+                data.pop("process", None)
+                data.pop("_logs", None)
+                config["instances"][inst_id] = data
         config["_active_instance"] = self._active_instance_id
         config["engine_dirs"] = self.engine_dirs
         config["ms_download_root"] = self.ms_download_root
@@ -3078,8 +3094,12 @@ class LlamaServerGUI:
         try:
             config = self._build_global_config()
             self.config_file = self._get_configs_path("instances.json")
-            with open(self.config_file, 'w', encoding='utf-8') as f:
+            tmp = self.config_file + ".tmp"
+            with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(config, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self.config_file)
         except Exception as e:
             self.update_output(f"[保存失败] {e}\n", tag="error")
     
@@ -3207,10 +3227,34 @@ class LlamaServerGUI:
         """Open browser when clicked from tray."""
         self.root.after(0, self.open_browser)
 
+    def _stop_all_instances(self):
+        """Kill all running server processes (multi-instance safe)."""
+        for inst_id, inst in list(self._instances.items()):
+            proc = inst.get("process")
+            if proc:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=3)
+                except Exception:
+                    pass
+            pid = inst.get("running_pid", "")
+            if pid:
+                try:
+                    if self._is_windows():
+                        subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                            capture_output=True, timeout=3, startupinfo=self._startupinfo())
+                    else:
+                        os.kill(int(pid), signal.SIGTERM)
+                except Exception:
+                    pass
+            inst["is_running"] = False
+            inst["process"] = None
+            inst["running_pid"] = ""
+            inst["health_active"] = False
+
     def quit_application(self, icon=None, item=None):
         """Quit app from tray."""
-        if self.server_process:
-            self.server_process.terminate()
+        self._stop_all_instances()
         if self.tray_icon:
             self.tray_icon.stop()
         self.root.after(0, self.root.destroy)
@@ -3321,7 +3365,6 @@ class LlamaServerGUI:
                 "running_host": "",
             }
         self._active_instance_id = inst_id
-        self._refresh_instance_combo()
 
     def _save_active_instance(self):
         with self._instances_lock:
@@ -3334,15 +3377,21 @@ class LlamaServerGUI:
             inst["custom_arguments"] = list(self.custom_arguments)
 
     def _switch_to_instance(self, instance_id):
-        if instance_id not in self._instances:
-            return
-        self._is_switching = True
-        self._active_instance_id = instance_id
-        inst = self._instances[instance_id]
-        self._params_from_dict(inst["params"])
-        self.selected_engine_dir = inst.get("engine_dir", "")
-        self.ctx_size_auto.set(inst.get("ctx_size_auto", False))
-        self.custom_arguments = list(inst.get("custom_arguments", []))
+        with self._instances_lock:
+            if instance_id not in self._instances:
+                return
+            self._is_switching = True
+            self._active_instance_id = instance_id
+            inst = self._instances[instance_id]
+            params_copy = dict(inst.get("params", {}))
+            eng_dir = inst.get("engine_dir", "")
+            ctx_auto = inst.get("ctx_size_auto", False)
+            cust_args = list(inst.get("custom_arguments", []))
+            is_running = inst.get("is_running", False)
+        self._params_from_dict(params_copy)
+        self.selected_engine_dir = eng_dir
+        self.ctx_size_auto.set(ctx_auto)
+        self.custom_arguments = cust_args
         self.rebuild_custom_args_list()
         self.update_all_sliders()
         self.root.after_idle(lambda: self.scan_engines() if hasattr(self, 'scan_engines') else None)
@@ -3350,20 +3399,17 @@ class LlamaServerGUI:
         self._sync_bottom_bar_for_active_instance()
         self._replay_instance_log(instance_id)
         self.update_output(f"\n[切换到 {instance_id}]\n")
-        if hasattr(self, 'instance_combo'):
-            self._refresh_instance_combo()
         self.root.after(0, self._auto_save_instances)
-        new_inst = self._instances.get(instance_id)
-        if new_inst and hasattr(self, '_set_run_lock'):
-            self._set_run_lock(new_inst.get("is_running", False))
+        if hasattr(self, '_set_run_lock'):
+            self._set_run_lock(is_running)
         self.root.after(200, lambda: self._release_switch_lock())
 
     def _restore_running_instances(self):
-        import os, subprocess, signal
         self.update_output("检查后台进程... ")
         for inst_id, inst in list(self._instances.items()):
             self._load_instance_log_file(inst_id)
-            pid = inst.get("running_pid", "")
+            with self._instances_lock:
+                pid = inst.get("running_pid", "")
             self.update_output(f"{inst['name']}: PID={pid} ")
             if not pid:
                 continue
@@ -3375,7 +3421,7 @@ class LlamaServerGUI:
                         ["tasklist", "/FI", f"PID eq {pid_int}", "/NH"],
                         capture_output=True, timeout=5, startupinfo=self._startupinfo()
                     )
-                    still_running = str(pid_int) in r.stdout.decode('utf-8', errors='replace')
+                    still_running = str(pid_int) in r.stdout.decode(self._sys_encoding, errors='replace')
                 else:
                     os.kill(pid_int, 0)
                     still_running = True
@@ -3391,22 +3437,23 @@ class LlamaServerGUI:
                 host = params.get("host", "127.0.0.1")
                 port = params.get("port", "")
                 if port:
-                    inst["is_running"] = True
-                    inst["running_port"] = port
-                    inst["running_host"] = host
-                    inst["health_active"] = True
+                    with self._instances_lock:
+                        inst["is_running"] = True
+                        inst["running_port"] = port
+                        inst["running_host"] = host
+                        inst["health_active"] = True
                     self.update_output(f"✓ 恢复 {inst['name']}·后台进程 (PID {pid}, 端口 {port})\n", tag="speed")
                     url = f"http://{host}:{port}/health"
                     threading.Thread(
                         target=self._monitor_loop,
-                        args=(url,),
+                        args=(url, 5, inst_id),
                         daemon=True
                     ).start()
             else:
-                inst["running_pid"] = ""
+                with self._instances_lock:
+                    inst["running_pid"] = ""
         self._refresh_instance_tree()
         self._sync_bottom_bar_for_active_instance()
-        self._refresh_instance_combo()
 
     def setup_instance_tab(self, parent):
         # ── Toolbar ──
@@ -3521,20 +3568,6 @@ class LlamaServerGUI:
             except tk.TclError:
                 pass
 
-    def _refresh_instance_combo(self):
-        if not hasattr(self, 'instance_combo'):
-            return
-        names = []
-        for inst in self._instances.values():
-            names.append(inst["name"])
-        self.instance_combo['values'] = names
-        inst = self._instances.get(self._active_instance_id)
-        if inst:
-            try:
-                self.instance_combo.set(inst["name"])
-            except tk.TclError:
-                pass
-
     def _update_star_markers(self, active_iid):
         if not hasattr(self, 'instance_tree'):
             return
@@ -3574,40 +3607,40 @@ class LlamaServerGUI:
             self.root.after(200, lambda: self._release_switch_lock())
 
     def _instance_add(self):
-        n = 1
-        while f"instance_{n}" in self._instances:
-            n += 1
-        inst_id = f"instance_{n}"
-        used_ports = set()
-        for inst in self._instances.values():
-            p = inst.get("params", {}).get("port", "")
-            if p:
-                used_ports.add(p)
-        default_port = "8082"
-        if default_port in used_ports:
-            for p in range(8090, 9000):
-                if str(p) not in used_ports:
-                    default_port = str(p)
-                    break
-        self._instances[inst_id] = {
-            "id": inst_id,
-            "name": f"LLaMA {n}",
-            "params": dict((ck, default) for ck, an, flag, kind, default in self._PARAM_DEFS),
-            "engine_dir": self.selected_engine_dir,
-            "ctx_size_auto": False,
-            "custom_arguments": [],
-            "process": None,
-            "is_running": False,
-            "health_active": False,
-            "running_port": "",
-            "running_host": "",
-            "running_pid": "",
-        }
-        self._instances[inst_id]["params"]["port"] = default_port
-        self._instances[inst_id]["params"]["host"] = "127.0.0.1"
+        with self._instances_lock:
+            n = 1
+            while f"instance_{n}" in self._instances:
+                n += 1
+            inst_id = f"instance_{n}"
+            used_ports = set()
+            for inst in self._instances.values():
+                p = inst.get("params", {}).get("port", "")
+                if p:
+                    used_ports.add(p)
+            default_port = "8082"
+            if default_port in used_ports:
+                for p in range(8090, 9000):
+                    if str(p) not in used_ports:
+                        default_port = str(p)
+                        break
+                self._instances[inst_id] = {
+                "id": inst_id,
+                "name": f"LLaMA {n}",
+                "params": dict((ck, default) for ck, an, flag, kind, default in self._PARAM_DEFS),
+                "engine_dir": self.selected_engine_dir,
+                "ctx_size_auto": False,
+                "custom_arguments": [],
+                "process": None,
+                "is_running": False,
+                "health_active": False,
+                "running_port": "",
+                "running_host": "",
+                "running_pid": "",
+            }
+            self._instances[inst_id]["params"]["port"] = default_port
+            self._instances[inst_id]["params"]["host"] = "127.0.0.1"
         self._switch_to_instance(inst_id)
         self._refresh_instance_tree()
-        self._refresh_instance_combo()
         Messagebox.ok(
             f"已添加实例「{self._instances[inst_id]['name']}」\n"
             f"端口预设为 {default_port}，可在「网络与API」标签页修改。",
@@ -3618,36 +3651,36 @@ class LlamaServerGUI:
         if not sel:
             return
         src_id = sel[0]
-        if src_id not in self._instances:
-            return
-        src = self._instances[src_id]
-        n = 1
-        while f"instance_{n}" in self._instances:
-            n += 1
-        new_id = f"instance_{n}"
-        new_params = dict(src["params"])
-        old_port = src["params"].get("port", "8082")
-        try:
-            new_params["port"] = str(int(old_port) + 1)
-        except ValueError:
-            new_params["port"] = "8083"
-        self._instances[new_id] = {
-            "id": new_id,
-            "name": f"{src['name']} (副本)",
-            "params": new_params,
-            "engine_dir": src.get("engine_dir", ""),
-            "ctx_size_auto": src.get("ctx_size_auto", False),
-            "custom_arguments": list(src.get("custom_arguments", [])),
-            "process": None,
-            "is_running": False,
-            "health_active": False,
-            "running_port": "",
-            "running_host": "",
-            "running_pid": "",
-        }
+        with self._instances_lock:
+            if src_id not in self._instances:
+                return
+            src = self._instances[src_id]
+            n = 1
+            while f"instance_{n}" in self._instances:
+                n += 1
+            new_id = f"instance_{n}"
+            new_params = dict(src["params"])
+            old_port = src["params"].get("port", "8082")
+            try:
+                new_params["port"] = str(int(old_port) + 1)
+            except ValueError:
+                new_params["port"] = "8083"
+            self._instances[new_id] = {
+                "id": new_id,
+                "name": f"{src['name']} (副本)",
+                "params": new_params,
+                "engine_dir": src.get("engine_dir", ""),
+                "ctx_size_auto": src.get("ctx_size_auto", False),
+                "custom_arguments": list(src.get("custom_arguments", [])),
+                "process": None,
+                "is_running": False,
+                "health_active": False,
+                "running_port": "",
+                "running_host": "",
+                "running_pid": "",
+            }
         self._switch_to_instance(new_id)
         self._refresh_instance_tree()
-        self._refresh_instance_combo()
         self.scan_engines()
         self.scan_downloaded_models()
         Messagebox.ok(
@@ -3683,7 +3716,6 @@ class LlamaServerGUI:
                 dialog.destroy()
                 inst["name"] = n
                 self._refresh_instance_tree()
-                self._refresh_instance_combo()
                 self._sync_bottom_bar_for_active_instance()
                 self._auto_save_instances()
             else:
@@ -3701,15 +3733,18 @@ class LlamaServerGUI:
             inst_id = sel[0]
         else:
             inst_id = self._active_instance_id
-        if not inst_id or inst_id not in self._instances:
-            return
-        inst = self._instances[inst_id]
-        if inst.get("is_running"):
-            Messagebox.show_warning("无法删除正在运行的实例。请先停止该实例。", "提示", parent=self.root)
-            return
-        if len(self._instances) <= 1:
-            Messagebox.show_warning("至少保留一个实例。", "提示", parent=self.root)
-            return
+        with self._instances_lock:
+            if not inst_id or inst_id not in self._instances:
+                return
+            inst = self._instances[inst_id]
+            if inst.get("is_running"):
+                self.root.after(0, lambda: Messagebox.show_warning(
+                    "无法删除正在运行的实例。请先停止该实例。", "提示", parent=self.root))
+                return
+            if len(self._instances) <= 1:
+                self.root.after(0, lambda: Messagebox.show_warning(
+                    "至少保留一个实例。", "提示", parent=self.root))
+                return
         reply = tk.messagebox.askokcancel(
             "确认删除",
             f"确定删除实例「{inst['name']}」？\n此操作不可撤销。",
@@ -3717,27 +3752,23 @@ class LlamaServerGUI:
         )
         if not reply:
             return
-        del self._instances[inst_id]
-        if self._active_instance_id == inst_id:
-            new_active = next(iter(self._instances.keys()))
-            self._switch_to_instance(new_active)
-        self._refresh_instance_tree()
-        self._refresh_instance_combo()
-        self._auto_save_instances()
-        self.root.update()
+        with self._instances_lock:
+            del self._instances[inst_id]
+            need_switch = self._active_instance_id == inst_id
+            if need_switch:
+                new_active = next(iter(self._instances.keys()))
+        try:
+            if need_switch:
+                self._switch_to_instance(new_active)
+        finally:
+            self._refresh_instance_tree()
+            self._auto_save_instances()
 
     def _set_run_lock(self, locked):
         state = tk.DISABLED if locked else tk.NORMAL
-        def _set_state_recursive(widget, st):
-            try:
-                widget.config(state=st)
-            except tk.TclError:
-                pass
-            for child in widget.winfo_children():
-                _set_state_recursive(child, st)
         for frame in getattr(self, '_param_frames', []):
             try:
-                _set_state_recursive(frame, state)
+                self._set_state_recursive(frame, state)
                 txt = frame.cget('text')
                 if locked and ' 🔒' not in txt:
                     frame.config(text=txt + ' 🔒')
@@ -3745,8 +3776,6 @@ class LlamaServerGUI:
                     frame.config(text=txt.replace(' 🔒', ''))
             except Exception:
                 pass
-        if hasattr(self, 'instance_combo'):
-            self.instance_combo.config(state=tk.DISABLED if locked else tk.NORMAL)
         if locked:
             inst = self._instances.get(self._active_instance_id)
             if inst:
@@ -3785,11 +3814,10 @@ def main():
     app = LlamaServerGUI(root)
 
     def on_closing():
-        if app.is_running and TRAY_AVAILABLE:
+        if any(inst.get("is_running") for inst in app._instances.values()) and TRAY_AVAILABLE:
             app.hide_to_tray()
         else:
-            if app.server_process:
-                app.server_process.terminate()
+            app._stop_all_instances()
             root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_closing)
