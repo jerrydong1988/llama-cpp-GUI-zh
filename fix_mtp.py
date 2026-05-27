@@ -2,6 +2,7 @@
 """Fix MTP/speculative decoding support in GUI."""
 import os, shutil
 
+# ⚠ WARNING: One-time migration script. Hardcoded Windows path, will not work on other machines.
 SRC = "C:/Users/Jerry/Projects/llama-cpp-GUI/llama-server_gui_new.py"
 
 with open(SRC, "r", encoding="utf-8") as f:

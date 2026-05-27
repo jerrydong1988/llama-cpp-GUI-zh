@@ -1,0 +1,74 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller ttkbootstrap pillow
+
+      - name: Build executable (--onefile)
+        run: |
+          python build_exe.py --onefile
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLaMA-Server-GUI-Windows
+          path: dist/LLaMA-Server-GUI.exe
+
+      - name: Attach to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/LLaMA-Server-GUI.exe
+          generate_release_notes: true
+
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller ttkbootstrap pillow
+
+      - name: Build executable (--onefile)
+        run: |
+          python build_exe.py --onefile
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLaMA-Server-GUI-Linux
+          path: dist/LLaMA-Server-GUI
+
+      - name: Attach to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/LLaMA-Server-GUI
+          generate_release_notes: true

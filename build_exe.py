@@ -1,27 +1,33 @@
 #!/usr/bin/env python3
 """
 Build script to create executable using PyInstaller
-Run this script to build the LLaMA Server GUI executable
+
+Usage:
+    python build_exe.py              # default: --onedir (directory mode)
+    python build_exe.py --onefile    # single-file executable
+    python build_exe.py --name=MyApp # custom name
 """
 
 import PyInstaller.__main__
 import os
 import sys
+import argparse
 
-def build_executable():
+
+def build_executable(onefile=False, name="LLaMA-Server-GUI"):
     """Build the executable using PyInstaller"""
-    
-    # Define the build arguments
+
+    mode = "onefile" if onefile else "onedir"
+
     args = [
-        'llama-server_gui_new.py',              # Main script
-        '--onedir',                     # Create directory mode (no temp dir, no cleanup warning)
-        '--windowed',                   # No console window (GUI app)
-        '--name=LLaMA-Server-GUI',      # Name of the executable
-        '--icon=llama-cpp.ico',         # Icon file (if exists)
-        '--add-data=llama-cpp.ico;.',   # Include icon in bundle (Windows format)
-        '--clean',                      # Clean before building
-        '--noconfirm',                  # Overwrite without asking
-        # Add hidden imports if needed
+        'llama-server_gui_new.py',
+        f'--{mode}',
+        '--windowed',
+        f'--name={name}',
+        '--icon=llama-cpp.ico',
+        '--add-data=llama-cpp.ico;.',
+        '--clean',
+        '--noconfirm',
         '--hidden-import=tkinter',
         '--hidden-import=tkinter.ttk',
         '--hidden-import=tkinter.filedialog',
@@ -29,58 +35,62 @@ def build_executable():
         '--hidden-import=tkinter.scrolledtext',
         '--hidden-import=tkinter.font',
     ]
-    
+
     # On Linux/Mac, use colon separator for add-data
     if sys.platform != 'win32':
-        # Replace Windows path separator with Unix
-        for i, arg in enumerate(args):
-            if arg.startswith('--add-data='):
-                args[i] = arg.replace(';', ':')
-    
-    print("Building executable with PyInstaller...")
-    print(f"Arguments: {' '.join(args)}")
-    
+        args = [arg.replace(';', ':') if arg.startswith('--add-data=') else arg for arg in args]
+
+    print(f"Building {mode} executable with PyInstaller...")
+    print(f"Args: {' '.join(args)}")
+
     try:
         PyInstaller.__main__.run(args)
-        print("\n✅ Build completed successfully!")
-        print("📁 Check the 'dist' folder for your executable")
-        
-        # Print the location of the executable
-        if sys.platform == 'win32':
-            exe_name = "LLaMA-Server-GUI.exe"
+        print("\n Build completed successfully!")
+
+        if onefile:
+            if sys.platform == 'win32':
+                exe_path = os.path.join("dist", f"{name}.exe")
+            else:
+                exe_path = os.path.join("dist", name)
         else:
-            exe_name = "LLaMA-Server-GUI"
-            
-        exe_path = os.path.join("dist", exe_name)
+            exe_path = os.path.join("dist", name)
+
         if os.path.exists(exe_path):
-            print(f"📄 Executable created: {exe_path}")
-        
+            print(f" Executable created: {exe_path}")
     except Exception as e:
-        print(f"❌ Build failed: {e}")
+        print(f" Build failed: {e}")
         return False
-    
+
     return True
 
+
 if __name__ == "__main__":
-    # Check if PyInstaller is installed
+    parser = argparse.ArgumentParser(description="Build LLaMA Server GUI executable")
+    parser.add_argument('--onefile', action='store_true',
+                        help="Build as single-file executable (default: directory mode)")
+    parser.add_argument('--name', default="LLaMA-Server-GUI",
+                        help="Executable name (default: LLaMA-Server-GUI)")
+    args = parser.parse_args()
+
     try:
         import PyInstaller
         print(f"PyInstaller version: {PyInstaller.__version__}")
     except ImportError:
-        print("❌ PyInstaller not found. Install it with: pip install pyinstaller")
+        print(" PyInstaller not found. Install it with: pip install pyinstaller")
         sys.exit(1)
-    
-    # Check if main script exists
+
     if not os.path.exists("llama-server_gui_new.py"):
-        print("❌ llama-server_gui_new.py not found in current directory")
+        print(" llama-server_gui_new.py not found in current directory")
         sys.exit(1)
-    
-    # Build the executable
-    success = build_executable()
-    
+
+    success = build_executable(onefile=args.onefile, name=args.name)
+
     if success:
-        print("\n🎉 Your LLaMA Server GUI is ready to use!")
-        print("💡 You can distribute the executable without requiring Python installation")
+        print("\n Your LLaMA Server GUI is ready to use!")
+        if args.onefile:
+            print(" Single-file executable created (dist/)")
+        else:
+            print(" Executable directory created (dist/)")
     else:
-        print("\n💥 Build failed. Check the error messages above.")
+        print("\n Build failed. Check the error messages above.")
         sys.exit(1)

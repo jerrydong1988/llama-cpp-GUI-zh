@@ -3,6 +3,10 @@
 
 import os, sys
 
+# ⚠ WARNING: This is a one-time migration script for the original developer's local setup.
+# It references an absolute Windows path and will NOT work on other machines.
+# All fixes from this script have already been applied to llama-server_gui_new.py.
+# Keep this file for reference only. Do NOT run it directly.
 SRC = "C:/Users/Jerry/Projects/llama-cpp-GUI/llama-server_gui_new.py"
 
 with open(SRC, "r", encoding="utf-8") as f:
