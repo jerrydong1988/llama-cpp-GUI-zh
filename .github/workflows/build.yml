@@ -6,69 +6,71 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install pyinstaller ttkbootstrap pillow
+        run: pip install pyinstaller ttkbootstrap pillow
 
-      - name: Build executable (--onefile)
-        run: |
-          python build_exe.py --onefile
+      - name: Build executable
+        run: python build_exe.py --onefile
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: LLaMA-Server-GUI-Windows
           path: dist/LLaMA-Server-GUI.exe
-
-      - name: Attach to Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/LLaMA-Server-GUI.exe
-          generate_release_notes: true
 
   build-linux:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install pyinstaller ttkbootstrap pillow
+        run: pip install pyinstaller ttkbootstrap pillow
 
-      - name: Build executable (--onefile)
-        run: |
-          python build_exe.py --onefile
+      - name: Build executable
+        run: python build_exe.py --onefile
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: LLaMA-Server-GUI-Linux
           path: dist/LLaMA-Server-GUI
 
-      - name: Attach to Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          files: dist/LLaMA-Server-GUI
+          name: LLaMA-Server-GUI-Windows
+          path: release/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: LLaMA-Server-GUI-Linux
+          path: release/
+
+      - name: List release files
+        run: ls -lh release/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
           generate_release_notes: true
