@@ -8,6 +8,7 @@ from tkinter import filedialog
 
 import subprocess
 import threading
+import shlex
 import os
 import json
 import webbrowser
@@ -845,6 +846,7 @@ class LlamaServerGUI:
         self.output_text.tag_configure("warn", foreground="#f39c12")       # orange: warnings
         self.output_text.tag_configure("feature", foreground="#3498db")    # blue: MTP, flash attn, reasoning
         self.output_text.tag_configure("normal", foreground="#7f8c8d")     # gray: default
+        self.output_text.tag_configure("info", foreground="#1abc9c")       # teal: info
         
         clear_btn = ttk.Button(parent, text="清空输出", command=self.clear_output, bootstyle="secondary-outline")
         clear_btn.pack(pady=(10, 0), anchor=tk.E)
@@ -1351,6 +1353,7 @@ class LlamaServerGUI:
         
         try:
             os.remove(self._repo_selected_path)
+            LlamaGUIClass._gguf_cache.pop(self._repo_selected_path, None)
             Messagebox.ok(f"已删除：{fname}", "删除成功", parent=self.root)
             self.scan_downloaded_models()  # Refresh tree
         except Exception as e:
@@ -1786,7 +1789,7 @@ class LlamaServerGUI:
         def fetch():
             try:
                 url = f"https://www.modelscope.cn/api/v1/models/{repo}/repo/files?Recursive=true"
-                req = urllib.request.Request(url)
+                req = urllib.request.Request(url, headers={"User-Agent": "llama-cpp-GUI-zh/1.0"})
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
                 
@@ -1988,15 +1991,16 @@ class LlamaServerGUI:
         self.ms_progress_label.config(text=f"({idx}/{total}) 正在下载 {filename}...")
         
         def download():
+            tmp_path = save_path + '.tmp'
             try:
                 url = f"https://www.modelscope.cn/models/{repo}/resolve/main/{file_info['path']}"
-                req = urllib.request.Request(url)
+                req = urllib.request.Request(url, headers={"User-Agent": "llama-cpp-GUI-zh/1.0"})
                 with urllib.request.urlopen(req, timeout=600) as resp:
                     total_size = int(resp.headers.get('Content-Length', 0))
                     chunk_size = 8 * 1024 * 1024
                     downloaded = 0
                     
-                    with open(save_path + '.tmp', 'wb') as f:
+                    with open(tmp_path, 'wb') as f:
                         while True:
                             if self._ms_cancel_event.is_set():
                                 self.root.after(0, self._dl_cleanup_cancelled)
@@ -2012,13 +2016,20 @@ class LlamaServerGUI:
                                     self._update_dl_progress(p, d, t, fn))
                 
                 # Rename .tmp to final name on success
-                os.replace(save_path + '.tmp', save_path)
+                os.replace(tmp_path, save_path)
                 self._ms_dl_results[file_info['type']] = save_path
                 self.root.after(0, self._download_next_in_queue)
             except urllib.error.URLError as e:
-                self.root.after(0, lambda: self._dl_queue_failed(f"网络错误：{e.reason}", save_path + '.tmp'))
+                self.root.after(0, lambda: self._dl_queue_failed(f"网络错误：{e.reason}", tmp_path))
             except Exception as e:
-                self.root.after(0, lambda: self._dl_queue_failed(str(e), save_path + '.tmp'))
+                self.root.after(0, lambda: self._dl_queue_failed(str(e), tmp_path))
+            finally:
+                # Clean up .tmp file if it still exists (e.g., cancelled mid-write)
+                if not os.path.exists(save_path) and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
         
         threading.Thread(target=download, daemon=True).start()
     
@@ -2126,7 +2137,7 @@ class LlamaServerGUI:
         def fetch():
             try:
                 url = f"https://www.modelscope.cn/api/v1/models/{repo}/repo/files?Recursive=true"
-                req = urllib.request.Request(url)
+                req = urllib.request.Request(url, headers={"User-Agent": "llama-cpp-GUI-zh/1.0"})
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     data = json.loads(resp.read().decode('utf-8'))
                 
@@ -2200,7 +2211,7 @@ class LlamaServerGUI:
         def download():
             try:
                 url = f"https://www.modelscope.cn/models/{repo}/resolve/main/{file_info['path']}"
-                req = urllib.request.Request(url)
+                req = urllib.request.Request(url, headers={"User-Agent": "llama-cpp-GUI-zh/1.0"})
                 with urllib.request.urlopen(req, timeout=600) as resp:
                     chunk_size = 8 * 1024 * 1024
                     with open(save_path + '.tmp', 'wb') as f:
@@ -2289,9 +2300,14 @@ class LlamaServerGUI:
         ToolTip(entry, text=tooltip_text)
         ToolTip(browse_btn, text=f"选择一个 {file_ext} 文件。")
 
+    _gguf_cache = {}
+    _gguf_cache_lock = threading.Lock()
+
     @staticmethod
-    @lru_cache(maxsize=256)
     def _read_gguf_metadata(filepath):
+        with LlamaGUIClass._gguf_cache_lock:
+            if filepath in LlamaGUIClass._gguf_cache:
+                return LlamaGUIClass._gguf_cache[filepath]
         """Read basic GGUF metadata from the file header.
         Returns dict with architecture, context_length, file_type, etc.
         Cached via lru_cache to avoid repeated file I/O."""
@@ -2360,9 +2376,15 @@ class LlamaServerGUI:
                     except Exception:
                         break
                 
-                return meta
+                result = meta
         except Exception:
-            return None
+            result = None
+        with LlamaGUIClass._gguf_cache_lock:
+            if len(LlamaGUIClass._gguf_cache) >= 256:
+                oldest = next(iter(LlamaGUIClass._gguf_cache))
+                del LlamaGUIClass._gguf_cache[oldest]
+            LlamaGUIClass._gguf_cache[filepath] = result
+        return result
 
     def _get_model_metadata_display(self, filepath):
         """Get a human-readable string of model metadata from GGUF header."""
@@ -2592,6 +2614,8 @@ class LlamaServerGUI:
         self.rebuild_custom_args_list()
         
     def rebuild_custom_args_list(self):
+        if not hasattr(self, 'custom_args_list_frame'):
+            return
         for widget in self.custom_args_list_frame.winfo_children():
             widget.destroy()
 
@@ -2717,7 +2741,10 @@ class LlamaServerGUI:
                 if _dangerous_re.search(val):
                     self.update_output(f"[警告] 自定义参数含危险字符已跳过: {val}\n", tag="error")
                     continue
-                cmd.extend(val.split())
+                try:
+                    cmd.extend(shlex.split(val))
+                except ValueError:
+                    cmd.extend(val.split())
         
         return cmd
 
@@ -2779,11 +2806,15 @@ class LlamaServerGUI:
         
         inst["process"] = process
         inst["running_pid"] = str(process.pid)
+        inst["_stop_event"] = threading.Event()
         stopped_inst_id = self._active_instance_id
         
         def run_server():
             try:
-                for line_bytes in iter(process.stdout.readline, b''):
+                while True:
+                    line_bytes = process.stdout.readline()
+                    if not line_bytes:
+                        break
                     try:
                         line = line_bytes.decode(self._sys_encoding)
                     except UnicodeDecodeError:
@@ -2844,10 +2875,18 @@ class LlamaServerGUI:
         
         # Method 1: process object (for instances started in this session)
         proc = inst.get("process")
+        stop_event = inst.get("_stop_event")
         if proc:
             try:
+                # Signal the run_server thread to stop reading
+                if stop_event:
+                    stop_event.set()
                 proc.terminate()
-                proc.wait(timeout=5)
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
                 killed = True
                 self.update_output("\n" + "="*80 + "\n⏹️ 正在停止服务器...\n")
             except Exception as e:
@@ -2918,6 +2957,7 @@ class LlamaServerGUI:
         with self._instances_lock:
             inst["is_running"] = False
             inst["process"] = None
+            inst["_stop_event"] = None
             inst["running_pid"] = ""
             inst["health_active"] = False
         self.is_running = any(inst.get("is_running") for inst in self._instances.values())
@@ -3623,7 +3663,8 @@ class LlamaServerGUI:
                     if str(p) not in used_ports:
                         default_port = str(p)
                         break
-                self._instances[inst_id] = {
+
+            self._instances[inst_id] = {
                 "id": inst_id,
                 "name": f"LLaMA {n}",
                 "params": dict((ck, default) for ck, an, flag, kind, default in self._PARAM_DEFS),
