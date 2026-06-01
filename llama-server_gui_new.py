@@ -3007,17 +3007,34 @@ class LlamaServerGUI:
         """Toggle between Chinese and English (requires restart)."""
         new_lang = "en_US" if _.current_lang == "zh_CN" else "zh_CN"
         _.load(new_lang)
+        # Save preference
+        locale_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs")
+        if getattr(sys, 'frozen', False):
+            locale_dir = os.path.join(os.path.dirname(sys.executable), "configs")
+        os.makedirs(locale_dir, exist_ok=True)
+        try:
+            with open(os.path.join(locale_dir, "locale.json"), "w", encoding="utf-8") as f:
+                json.dump({"lang": new_lang}, f)
+        except Exception:
+            pass
+        
         self._lang_btn.config(text="🌐 EN" if new_lang == "zh_CN" else "🌐 中文")
         reply = tk.messagebox.askyesno(
             _("语言已切换"), 
             _("语言已切换为 {lang}\n\n需要重启程序才能完全生效。\n是否立即重启？").format(
-                lang=_("中文") if new_lang == "zh_CN" else "English"),
+                lang=_("中文") if new_lang == "zh_CN" else _("English")
+            ),
             parent=self.root
         )
         if reply:
             self._stop_all_instances()
+            self._auto_save_instances()
             self.root.destroy()
-            main()
+            # Restart via new process (clean Tk interpreter)
+            if getattr(sys, 'frozen', False):
+                subprocess.Popen([sys.executable])
+            else:
+                subprocess.Popen([sys.executable, __file__])
     
     # --- 配置管理 (Named Configs) ---
 
@@ -3631,9 +3648,23 @@ def resource_path(filename):
     return os.path.join(os.path.abspath("."), filename)
 
 def main():
-    # Auto-detect language from system locale
-    sys_locale = locale.getdefaultlocale()[0] or ""
-    lang = "zh_CN" if sys_locale.startswith("zh") else "en_US"
+    # Load persisted language preference, or auto-detect
+    locale_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "configs", "locale.json")
+    if getattr(sys, 'frozen', False):
+        locale_path = os.path.join(os.path.dirname(sys.executable), "configs", "locale.json")
+    
+    lang = None
+    try:
+        if os.path.isfile(locale_path):
+            with open(locale_path, "r", encoding="utf-8") as f:
+                lang = json.load(f).get("lang")
+    except Exception:
+        pass
+    
+    if not lang:
+        sys_locale = (locale.getdefaultlocale() or ('', ''))[0]
+        lang = "zh_CN" if sys_locale.startswith("zh") else "en_US"
+    
     _.load(lang)
     root = ttk.Window(themename="cosmo")
     
