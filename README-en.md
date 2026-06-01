@@ -2,7 +2,7 @@
 
 > [🇨🇳 中文](README.md)
 >
-> ⚠️ **v1.9.0 Breaking Change**: Cross-platform support (Linux/macOS), GitHub Actions CI/CD, and major code quality improvements. `llama-server.exe` is no longer hardcoded; port killing now works on Linux; multiple logic defects fixed. All users are recommended to upgrade.
+> ⚠️ **v2.0.0 Breaking Change**: Architecture refactoring — `gguf_reader.py` and `config_store.py` extracted as independent modules; unified process kill and UI sync logic; main file reduced by 200+ lines. Compiled with `--windowed` mode (no console popup).
 >
 > Fork of [yossifibrahem/llama-cpp-GUI](https://github.com/yossifibrahem/llama-cpp-GUI) with deep customization — graphical management for llama.cpp servers.
 
@@ -104,7 +104,7 @@ python build_exe.py --onefile    # single-file mode (easier distribution)
 Push a version tag to trigger GitHub Actions:
 
 ```bash
-git tag v1.9.0
+git tag v2.0.0
 git push --tags
 ```
 
@@ -115,6 +115,8 @@ Download the compiled executable from the [Releases](https://github.com/jerrydon
 ```
 LLaMA-Server-GUI/
 ├── llama-server_gui_new.py   # Main program
+├── gguf_reader.py            # GGUF binary parser module
+├── config_store.py           # Atomic config storage module
 ├── build_exe.py              # Build script (supports --onefile)
 ├── .github/workflows/        # GitHub Actions CI/CD configuration
 ├── configs/                  # Named configs (JSON)
@@ -153,6 +155,8 @@ This repository is a deep customization of [yossifibrahem/llama-cpp-GUI](https:/
 | Cross-platform | ❌ | ✅ Windows/Linux/macOS compatibility |
 | CI/CD Automated Builds | ❌ | ✅ GitHub Actions + Release |
 | Thread Safety | ❌ | ✅ Instance state locking |
+| Modular Architecture | ❌ | ✅ GGUF parser / config storage modules (v2.0.0) |
+| Code Quality | ❌ | ✅ Unified process kill / UI sync / God Object reduction |
 
 ## License
 
