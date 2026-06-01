@@ -3471,19 +3471,19 @@ class LlamaServerGUI:
                     if str(p) not in used_ports:
                         default_port = str(p)
                         break
-                self._instances[inst_id] = {
-                "id": inst_id,
-                "name": f"LLaMA {n}",
-                "params": dict((ck, default) for ck, an, flag, kind, default in self._PARAM_DEFS),
-                "engine_dir": self.selected_engine_dir,
-                "ctx_size_auto": False,
-                "custom_arguments": [],
-                "process": None,
-                "is_running": False,
-                "health_active": False,
-                "running_port": "",
-                "running_host": "",
-                "running_pid": "",
+            self._instances[inst_id] = {
+            "id": inst_id,
+            "name": f"LLaMA {n}",
+            "params": dict((ck, default) for ck, an, flag, kind, default in self._PARAM_DEFS),
+            "engine_dir": self.selected_engine_dir,
+            "ctx_size_auto": False,
+            "custom_arguments": [],
+            "process": None,
+            "is_running": False,
+            "health_active": False,
+            "running_port": "",
+            "running_host": "",
+            "running_pid": "",
             }
             self._instances[inst_id]["params"]["port"] = default_port
             self._instances[inst_id]["params"]["host"] = "127.0.0.1"
