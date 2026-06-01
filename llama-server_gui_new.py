@@ -397,7 +397,7 @@ class LlamaServerGUI:
             ("output",    _("📊 服务器输出"),     "",              "setup_output_tab",             "pack"),
         ]
         
-        for iid, text, parent, method, _ in sections:
+        for iid, text, parent, method, _pd in sections:
             self.nav_tree.insert(parent, tk.END, iid=iid, text=text)
         
         self.nav_tree.bind("<<TreeviewSelect>>", self._on_nav_select)
@@ -411,7 +411,7 @@ class LlamaServerGUI:
         
         # Create all content panels (initially hidden)
         self._panels = {}
-        for iid, text, parent, method, _ in sections:
+        for iid, text, parent, method, _pd in sections:
             panel = ttk.Frame(self.content_frame, padding="10")
             self._panels[iid] = panel
             # Populate via the original setup method
@@ -1915,7 +1915,7 @@ class LlamaServerGUI:
     
     def _ms_update_dl_button(self):
         """Enable download button if any checkbox is ticked."""
-        has_checked = any(var.get() for var, _ in self.ms_file_vars)
+        has_checked = any(var.get() for var, _v in self.ms_file_vars)
         self.download_ms_btn.config(state=tk.NORMAL if has_checked else tk.DISABLED)
     
     def download_selected_ms_file(self):
