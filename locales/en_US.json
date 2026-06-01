@@ -371,6 +371,20 @@
   "语言已切换为 {lang}\n\n需要重启程序才能完全生效。\n是否立即重启？": "Switched to {lang}\n\nA restart is required. Restart now?",
   "中文": "Chinese",
   "🌐 EN": "🌐 EN",
-  "🌐 中文": "DRY sequence breaker. Resets counter on match.",
-  "English": "English"
+  "🌐 中文": "🌐 中文",
+  "English": "English",
+  "状态": "Status",
+  "端口": "Port",
+  "模型": "Model",
+  "引擎": "Engine",
+  "文件名": "Filename",
+  "大小": "Size",
+  "类型": "Type",
+  "来源": "Source",
+  "路径": "Path",
+  "名称": "Name",
+  "版本": "Version",
+  "本地": "Local",
+  "注意": "Note",
+  "草稿模型路径 (-md):": "Draft Model Path (-md):"
 }

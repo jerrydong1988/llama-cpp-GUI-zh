@@ -367,7 +367,7 @@ class LlamaServerGUI:
             bootstyle="secondary-link", takefocus=False)
         self._theme_btn.pack(side=tk.LEFT)
         # Language toggle button
-        self._lang_btn = ttk.Button(theme_frame, text="🌐 EN" if _.current_lang == "zh_CN" else "🌐 中文",
+        self._lang_btn = ttk.Button(theme_frame, text=_("🌐 EN") if _.current_lang == "zh_CN" else _("🌐 中文"),
             command=self.toggle_language, bootstyle="secondary-link", takefocus=False)
         self._lang_btn.pack(side=tk.LEFT, padx=(8, 0))
         
@@ -395,7 +395,7 @@ class LlamaServerGUI:
             ("engine",    _("🖥 引擎管理"),       "",              "setup_engine_tab",             "grid"),
             ("models",    _("📁 模型与参数"),    "",              "setup_model_tab",              "pack"),
             ("gen",       _("⚙️ 生成参数"),      "",              "setup_generation_tab",         "pack"),
-            ("perf",      "🚀 性能",          "",              "setup_performance_core_tab",   "pack"),
+            ("perf",      _("🚀 性能"),          "",              "setup_performance_core_tab",   "pack"),
             ("advanced",  _("🔬 高级"),          "",              "setup_performance_advanced_tab","pack"),
             ("api",       _("🌐 网络与API"),     "",              "setup_server_api_tab",         "grid"),
             ("output",    _("📊 服务器输出"),     "",              "setup_output_tab",             "pack"),
@@ -493,7 +493,7 @@ class LlamaServerGUI:
         model_group = ttk.Labelframe(parent, text=_("主模型"), padding="10")
         model_group.pack(fill=tk.X, pady=5)
         self.model_path = tk.StringVar()
-        self.create_file_entry(model_group, "模型路径 (-m):", self.model_path, "GGUF 模型文件的路径。", ".gguf", row=0)
+        self.create_file_entry(model_group, _("模型路径 (-m):"), self.model_path, _("GGUF 模型文件的路径。"), ".gguf", row=0)
         self.alias = tk.StringVar()
         self.create_entry(model_group, _("模型别名 (-a):"), self.alias, _("为模型设置别名（API 调用时使用）。"), row=1)
 
@@ -501,11 +501,11 @@ class LlamaServerGUI:
         ext_group = ttk.Labelframe(parent, text=_("模型扩展"), padding="10")
         ext_group.pack(fill=tk.X, pady=5)
         self.lora_path = tk.StringVar()
-        self.create_file_entry(ext_group, "LoRA 路径 (--lora):", self.lora_path, "LoRA 适配器文件的路径（可选）。", ".gguf", row=0)
+        self.create_file_entry(ext_group, _("LoRA 路径 (--lora):"), self.lora_path, "LoRA 适配器文件的路径（可选）。", ".gguf", row=0)
         self.mmproj_path = tk.StringVar()
-        self.create_file_entry(ext_group, "多模态投影器 (--mmproj):", self.mmproj_path, "多模态投影器文件的路径（视觉模型用）。", ".gguf", row=1)
+        self.create_file_entry(ext_group, _("多模态投影器 (--mmproj):"), self.mmproj_path, "多模态投影器文件的路径（视觉模型用）。", ".gguf", row=1)
         self.grammar_file = tk.StringVar()
-        self.create_file_entry(ext_group, "语法文件 (--grammar-file):", self.grammar_file, "结构化输出用的 GBNF 语法文件路径（*.gbnf）。", ".gbnf", row=2)
+        self.create_file_entry(ext_group, _("语法文件 (--grammar-file):"), self.grammar_file, "结构化输出用的 GBNF 语法文件路径（*.gbnf）。", ".gbnf", row=2)
         
 
         # --- Chat Behavior ---
@@ -746,7 +746,7 @@ class LlamaServerGUI:
         self._embedding_frames.append(spec_group)
         spec_group.pack(fill=tk.X, pady=5)
         self.draft_model_path = tk.StringVar()
-        self.create_file_entry(spec_group, "草稿模型 (-md):", self.draft_model_path, "推测解码用的草稿模型路径。", ".gguf", row=0)
+        self.create_file_entry(spec_group, _("草稿模型 (-md):"), self.draft_model_path, "推测解码用的草稿模型路径。", ".gguf", row=0)
         self.draft_gpu_layers = tk.StringVar(value="")
         self.create_spinbox(spec_group, _("草稿 GPU 层数 (-ngld):"), self.draft_gpu_layers, _("草稿模型的 GPU 层数。"), row=1, from_=0, to=99, increment=1)
         self.draft_tokens = tk.StringVar(value="")
@@ -1010,7 +1010,7 @@ class LlamaServerGUI:
         
         self.repo_tree = ttk.Treeview(tree_frame, columns=('size', 'filetype', 'fullpath'),
             show='tree', selectmode='browse', height=12)
-        self.repo_tree.heading('#0', text='模型文件')
+        self.repo_tree.heading('#0', text=_('模型文件'))
         self.repo_tree.column('#0', width=400, minwidth=300)
         
         tree_scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.repo_tree.yview)
@@ -1032,12 +1032,12 @@ class LlamaServerGUI:
         
         self.repo_info_vars = {}
         info_fields = [
-            ('文件名', 'name', ''),
-            ('大小', 'size', ''),
-            ('类型', 'type', ''),
-            ('来源', 'source', ''),
-            ('路径', 'path', ''),
-            ('元信息', 'meta', ''),
+            (_('文件名'), 'name', ''),
+            (_('大小'), 'size', ''),
+            (_('类型'), 'type', ''),
+            (_('来源'), 'source', ''),
+            (_('路径'), 'path', ''),
+            (_('元信息'), 'meta', ''),
         ]
         for label, key, default in info_fields:
             row = ttk.Frame(detail_group)
@@ -1085,7 +1085,7 @@ class LlamaServerGUI:
         app_dir = os.path.dirname(self.get_config_path(''))
         default_path = os.path.join(app_dir, 'models')
         self.model_repo_roots = [
-            {'path': default_path, 'label': '默认仓库', 'builtin': True}
+            {'path': default_path, 'label': _('默认仓库'), 'builtin': True}
         ]
         
         # Auto-scan on first load
@@ -1150,7 +1150,7 @@ class LlamaServerGUI:
         self.repo_root_label.config(text=f"{n_roots} 个目录{suffix}")
         
         if not total_files:
-            self.repo_tree.insert('', tk.END, text='📭 未找到模型文件。点击「添加目录」导入已有模型。', iid='_empty')
+            self.repo_tree.insert('', tk.END, text=_('📭 未找到模型文件。点击「添加目录」导入已有模型。'), iid='_empty')
     
     def _scan_directory_for_gguf(self, directory):
         """Recursively scan a directory for .gguf files. Returns list of (full_path, filename)."""
@@ -1410,7 +1410,7 @@ class LlamaServerGUI:
         
         self.engine_tree = ttk.Treeview(list_frame, columns=('source', 'dirpath'),
             show='tree', selectmode='browse', height=8)
-        self.engine_tree.heading('#0', text='已安装引擎')
+        self.engine_tree.heading('#0', text=_('已安装引擎'))
         self.engine_tree.column('#0', width=400, minwidth=300)
         # Tag for default engine highlight
         self.engine_tree.tag_configure('default', background='#FFE4B5', foreground='#8B4513', font=('TkDefaultFont', 9, 'bold'))
@@ -1431,7 +1431,7 @@ class LlamaServerGUI:
         det_group.pack(fill=tk.X, pady=(0, 10))
         
         self.engine_info_vars = {}
-        for label, key in [('名称', 'name'), ('版本', 'version'), ('来源', 'source'), ('路径', 'dir')]:
+        for label, key in [(_('名称'), 'name'), (_('版本'), 'version'), (_('来源'), 'source'), (_('路径'), 'dir')]:
             row = ttk.Frame(det_group)
             row.pack(fill=tk.X, pady=2)
             ttk.Label(row, text=f"{label}：", width=6, anchor=tk.E).pack(side=tk.LEFT)
@@ -1492,7 +1492,7 @@ class LlamaServerGUI:
                 eng_dir = os.path.join(engines_dir, entry)
                 exe_path = os.path.join(eng_dir, self._exe_name())
                 if os.path.isdir(eng_dir) and os.path.isfile(exe_path):
-                    eng_info = self._get_engine_info(entry, eng_dir, exe_path, '本地')
+                    eng_info = self._get_engine_info(entry, eng_dir, exe_path, _('本地'))
                     engines.append(eng_info)
                     seen_dirs.add(os.path.normcase(eng_dir))
         
@@ -1509,7 +1509,7 @@ class LlamaServerGUI:
                 exe_path = os.path.join(eng_dir, self._exe_name())
                 if os.path.isfile(exe_path):
                     name = os.path.basename(os.path.normpath(eng_dir))
-                    eng_info = self._get_engine_info(name, eng_dir, exe_path, '自定义')
+                    eng_info = self._get_engine_info(name, eng_dir, exe_path, _('自定义'))
                     engines.append(eng_info)
                     seen_dirs.add(norm)
         
@@ -1662,7 +1662,7 @@ class LlamaServerGUI:
                 Messagebox.show_warning(_("该引擎已在列表中。"), _("重复"), parent=self.root)
                 return
         
-        eng = self._get_engine_info(name, chosen, exe_path, '自定义')
+        eng = self._get_engine_info(name, chosen, exe_path, _('自定义'))
         self.engine_dirs.append(eng)
         self.engine_tree_items[eng['name']] = eng
         
@@ -1800,7 +1800,7 @@ class LlamaServerGUI:
                     data = json.loads(resp.read().decode('utf-8'))
                 
                 if not data.get('Success'):
-                    err_msg = data.get('Message', '未知错误')
+                    err_msg = data.get('Message', _('未知错误'))
                     self.root.after(0, lambda: self._ms_fetch_complete(False, f"查询失败：{err_msg}"))
                     return
                 
@@ -3018,7 +3018,7 @@ class LlamaServerGUI:
         except Exception:
             pass
         
-        self._lang_btn.config(text="🌐 EN" if new_lang == "zh_CN" else "🌐 中文")
+        self._lang_btn.config(text=_("🌐 EN") if new_lang == "zh_CN" else _("🌐 中文"))
         reply = tk.messagebox.askyesno(
             _("语言已切换"), 
             _("语言已切换为 {lang}\n\n需要重启程序才能完全生效。\n是否立即重启？").format(
@@ -3061,10 +3061,10 @@ class LlamaServerGUI:
 
         image = self.load_app_icon()
         menu_items = [
-            item('显示窗口', self.show_window, default=True),
-            item('打开浏览器', self.open_browser_from_tray, enabled=lambda i: self.is_running),
+            item(_('显示窗口'), self.show_window, default=True),
+            item(_('打开浏览器'), self.open_browser_from_tray, enabled=lambda i: self.is_running),
             pystray.Menu.SEPARATOR,
-            item('退出程序', self.quit_application),
+            item(_('退出程序'), self.quit_application),
         ]
         icon = pystray.Icon("llama_server", image, _("LLaMA 服务器"), menu=pystray.Menu(*menu_items))
         return icon
@@ -3340,15 +3340,15 @@ class LlamaServerGUI:
             foreground=[("selected", "white")])
         self.instance_tree = ttk.Treeview(tree_frame, columns=cols, show='tree headings',
             selectmode='browse', height=10, style="Instance.Treeview")
-        self.instance_tree.heading('#0', text='实例名称')
+        self.instance_tree.heading('#0', text=_('实例名称'))
         self.instance_tree.column('#0', width=200, minwidth=140)
-        self.instance_tree.heading('status', text='状态')
+        self.instance_tree.heading('status', text=_('状态'))
         self.instance_tree.column('status', width=90)
-        self.instance_tree.heading('port', text='端口')
+        self.instance_tree.heading('port', text=_('端口'))
         self.instance_tree.column('port', width=70)
-        self.instance_tree.heading('model', text='模型')
+        self.instance_tree.heading('model', text=_('模型'))
         self.instance_tree.column('model', width=250, minwidth=150)
-        self.instance_tree.heading('engine', text='引擎')
+        self.instance_tree.heading('engine', text=_('引擎'))
         self.instance_tree.column('engine', width=180, minwidth=100)
 
         tree_scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.instance_tree.yview)
