@@ -365,7 +365,11 @@ class LlamaServerGUI:
         theme_frame.pack(side=tk.RIGHT)
         self._theme_btn = ttk.Button(theme_frame, text=_("☀ 明亮"), command=self.toggle_theme,
             bootstyle="secondary-link", takefocus=False)
-        self._theme_btn.pack()
+        self._theme_btn.pack(side=tk.LEFT)
+        # Language toggle button
+        self._lang_btn = ttk.Button(theme_frame, text="🌐 EN" if _.current_lang == "zh_CN" else "🌐 中文",
+            command=self.toggle_language, bootstyle="secondary-link", takefocus=False)
+        self._lang_btn.pack(side=tk.LEFT, padx=(8, 0))
         
         # ── Main: Sidebar + Content ──
         main_frame = ttk.Frame(self.root)
@@ -2999,6 +3003,22 @@ class LlamaServerGUI:
             text=_("🌙 暗色") if new_theme == "flatly" else _("☀ 明亮")
         )
     
+    def toggle_language(self):
+        """Toggle between Chinese and English (requires restart)."""
+        new_lang = "en_US" if _.current_lang == "zh_CN" else "zh_CN"
+        _.load(new_lang)
+        self._lang_btn.config(text="🌐 EN" if new_lang == "zh_CN" else "🌐 中文")
+        reply = tk.messagebox.askyesno(
+            _("语言已切换"), 
+            _("语言已切换为 {lang}\n\n需要重启程序才能完全生效。\n是否立即重启？").format(
+                lang=_("中文") if new_lang == "zh_CN" else "English"),
+            parent=self.root
+        )
+        if reply:
+            self._stop_all_instances()
+            self.root.destroy()
+            main()
+    
     # --- 配置管理 (Named Configs) ---
 
 
@@ -3611,7 +3631,10 @@ def resource_path(filename):
     return os.path.join(os.path.abspath("."), filename)
 
 def main():
-    _.load("zh_CN")
+    # Auto-detect language from system locale
+    sys_locale = locale.getdefaultlocale()[0] or ""
+    lang = "zh_CN" if sys_locale.startswith("zh") else "en_US"
+    _.load(lang)
     root = ttk.Window(themename="cosmo")
     
     try:
