@@ -79,7 +79,7 @@ class LlamaServerGUI:
         except ImportError:
             if self._logical_cpus > 4:
                 self._physical_cores = self._logical_cpus // 2
-        self._cpu_hint = f"默认 {self._physical_cores}·最多 {self._logical_cpus} 线程"
+        self._cpu_hint = _("默认 {cores}·最多 {threads} 线程").format(cores=self._physical_cores, threads=self._logical_cpus)
 
         # Engine management
         self.engine_dirs = []  # list of {"name": str, "dir": str, "exe": str, "source": str}
@@ -676,7 +676,7 @@ class LlamaServerGUI:
         btn_t = ttk.Button(core_group, text=_("设为最大"), bootstyle="primary-link",
                            command=lambda: self.threads.set(str(self._logical_cpus)))
         btn_t.grid(row=2, column=3, sticky=tk.W, padx=2, pady=5)
-        ToolTip(btn_t, f"设置为系统最大线程数（{self._logical_cpus}）")
+        ToolTip(btn_t, _("设置为系统最大线程数（{n}）").format(n=self._logical_cpus))
         def validate_thread(*_):
             val = self.threads.get()
             if val and val.isdigit() and int(val) > self._logical_cpus:
@@ -707,7 +707,7 @@ class LlamaServerGUI:
         btn_tb = ttk.Button(core_group, text=_("设为最大"), bootstyle="primary-link",
                             command=lambda: self.threads_batch.set(str(self._logical_cpus)))
         btn_tb.grid(row=5, column=3, sticky=tk.W, padx=2, pady=5)
-        ToolTip(btn_tb, f"设置为系统最大线程数（{self._logical_cpus}）")
+        ToolTip(btn_tb, _("设置为系统最大线程数（{n}）").format(n=self._logical_cpus))
         def validate_thread_batch(*_):
             val = self.threads_batch.get()
             if val and val.isdigit() and int(val) > self._logical_cpus:
@@ -1147,7 +1147,7 @@ class LlamaServerGUI:
         # Update label
         n_roots = len([r for r in self.model_repo_roots if os.path.isdir(r['path'])])
         suffix = f" | 共 {total_files} 个文件" if total_files else ""
-        self.repo_root_label.config(text=f"{n_roots} 个目录{suffix}")
+        self.repo_root_label.config(text=_("{n} directories{suffix}").format(n=n_roots, suffix=suffix))
         
         if not total_files:
             self.repo_tree.insert('', tk.END, text=_('📭 未找到模型文件。点击「添加目录」导入已有模型。'), iid='_empty')
@@ -1262,7 +1262,7 @@ class LlamaServerGUI:
         
         self.model_repo_roots.append({'path': chosen, 'label': label, 'builtin': False})
         self.scan_downloaded_models()
-        self.repo_root_label.config(text=f"{len(self.model_repo_roots)} 个目录")
+        self.repo_root_label.config(text=_("{n} directories").format(n=len(self.model_repo_roots)))
         
         Messagebox.ok(f"已添加目录：{chosen}\n\n点击「刷新」可重新扫描。", "添加成功", parent=self.root)
     

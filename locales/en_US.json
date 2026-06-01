@@ -386,5 +386,13 @@
   "版本": "Version",
   "本地": "Local",
   "注意": "Note",
-  "草稿模型路径 (-md):": "Draft Model Path (-md):"
+  "草稿模型路径 (-md):": "Draft Model Path (-md):",
+  "下载目录:": "Download Dir:",
+  "模型详情": "Model Details",
+  "操作": "Actions",
+  "导航": "Navigation",
+  "默认 {cores}·最多 {threads} 线程": "Default {cores} Max {threads} threads",
+  "设置为系统最大线程数（{n}）": "Set to system max threads ({n})",
+  "{n} directories{suffix}": "{n} dir(s){suffix}",
+  "{n} directories": "{n} dir(s)"
 }
