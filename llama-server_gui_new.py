@@ -34,7 +34,7 @@ except ImportError:
     TRAY_AVAILABLE = False
 
 # Application version
-__version__ = "1.9.1"
+__version__ = "2.1.0"
 
 class LlamaServerGUI:
     def __init__(self, root):
