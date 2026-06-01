@@ -2,7 +2,7 @@
 
 > [🇺🇸 English](README-en.md)
 >
-> ⚠️ **v1.9.0 重要变更**：跨平台支持（Linux/macOS）、GitHub Actions 自动编译、多项代码质量优化。`llama-server.exe` 不再硬编码，端口查杀兼容 Linux，修复多处逻辑缺陷。建议所有用户升级。
+> ⚠️ **v2.0.0 重要变更**：架构重构，提取 `gguf_reader.py` 和 `config_store.py` 独立模块；统一进程查杀与 UI 同步逻辑；主文件精简 200+ 行。编译产物 `--windowed` 模式，双击无黑框。
 >
 > 基于 [yossifibrahem/llama-cpp-GUI](https://github.com/yossifibrahem/llama-cpp-GUI) 深度二次开发 — 图形化管理 llama.cpp 服务器，简化llama.cpp的命令操作。感谢yossifibrahem开源了本项目，同时中文版改进工作主要贡献是Hermes Agent及背后的Deepseek v4 Flash模型，本人只提供了想法，具体实现由Hermes Agent及背后的Deepseek v4 Flash模型完成。
 
@@ -100,7 +100,7 @@ python build_exe.py --onefile    # 单文件模式（便于分发）
 推送版本标签即可触发 GitHub Actions 自动编译：
 
 ```bash
-git tag v1.9.0
+git tag v2.0.0
 git push --tags
 ```
 
@@ -111,6 +111,8 @@ git push --tags
 ```
 LLaMA-Server-GUI/
 ├── llama-server_gui_new.py   # 主程序
+├── gguf_reader.py            # GGUF 二进制解析模块
+├── config_store.py           # 配置原子存储模块
 ├── build_exe.py              # 构建脚本（支持 --onefile）
 ├── .github/workflows/        # GitHub Actions 自动编译配置
 ├── configs/                  # 命名配置（JSON）
@@ -123,7 +125,7 @@ LLaMA-Server-GUI/
 
 ## 系统要求
 
-- **Windows 10/11** / **Linux** / **macOS**（v1.9.0 起支持）
+- **Windows 10/11** / **Linux** / **macOS**（v1.9.0 起支持跨平台）
 - Python 3.7+（从源码运行时）
 - `llama-server` 可执行文件
 
@@ -149,6 +151,8 @@ LLaMA-Server-GUI/
 | 跨平台 | ❌ | ✅ Windows/Linux/macOS 兼容 |
 | CI/CD 自动编译 | ❌ | ✅ GitHub Actions + Release |
 | 线程安全 | ❌ | ✅ 实例状态读写加锁 |
+| 模块化 | ❌ | ✅ GGUF 解析 / 配置存储独立模块（v2.0.0） |
+| 代码质量 | ❌ | ✅ 统一进程查杀 / UI 同步 / 消除 God Object |
 
 ## 许可证
 
