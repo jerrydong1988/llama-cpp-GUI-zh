@@ -35,6 +35,8 @@ def build_executable(onefile=False, name="LLaMA-Server-GUI"):
         '--hidden-import=tkinter.scrolledtext',
         '--hidden-import=tkinter.font',
         '--hidden-import=i18n',
+        '--hidden-import=PIL._imagingtk',
+        '--hidden-import=PIL.ImageTk',
         '--add-data=locales;locales',
     ]
 
