@@ -34,6 +34,8 @@ def build_executable(onefile=False, name="LLaMA-Server-GUI"):
         '--hidden-import=tkinter.messagebox',
         '--hidden-import=tkinter.scrolledtext',
         '--hidden-import=tkinter.font',
+        '--hidden-import=i18n',
+        '--add-data=locales;locales',
     ]
 
     # On Linux/Mac, use colon separator for add-data
