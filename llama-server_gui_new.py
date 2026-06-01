@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 import tkinter as tk
 import ttkbootstrap as ttk
 from ttkbootstrap.dialogs import Messagebox
@@ -19,6 +19,8 @@ from functools import lru_cache
 from collections import deque
 import signal
 import locale
+import gguf_reader
+import config_store
 
 try:
     import pystray
@@ -301,7 +303,7 @@ class LlamaServerGUI:
         """Check current model path and update embedding mode."""
         path = self.model_path.get().strip()
         if path:
-            is_emb = self._is_embedding_model(filepath=path, fname=os.path.basename(path))
+            is_emb = gguf_reader.is_embedding_model(filepath=path, fname=os.path.basename(path))
             self._set_embedding_mode(is_emb)
         else:
             self._set_embedding_mode(False)
@@ -1163,7 +1165,7 @@ class LlamaServerGUI:
         size = os.path.getsize(fpath)
         size_str = self._format_size(size)
         
-        ftype = self._classify_gguf_file(filepath=fpath, fname=fname)
+        ftype = gguf_reader.classify_file(filepath=fpath, fname=fname)
         icon = "📷" if ftype == 'mmproj' else ("📊" if ftype == 'imatrix' else "📄")
         
         safe_name = fname.replace('.', '_').replace(' ', '_')
@@ -1211,7 +1213,7 @@ class LlamaServerGUI:
         
         # Show GGUF metadata for model files
         if ftype == 'model' and os.path.isfile(item_info['path']):
-            meta_str = self._get_model_metadata_display(item_info['path'])
+            meta_str = gguf_reader.metadata_display(item_info['path'])
             self.repo_info_vars['meta'].set(meta_str)
         else:
             self.repo_info_vars['meta'].set('')
@@ -1316,7 +1318,7 @@ class LlamaServerGUI:
                 if not f.endswith('.gguf'):
                     continue
                 fpath = os.path.join(repo_dir, f)
-                ftype = self._classify_gguf_file(filepath=fpath, fname=f)
+                ftype = gguf_reader.classify_file(filepath=fpath, fname=f)
                 if ftype == 'mmproj':
                     mmproj_found = fpath
                     break
@@ -1802,7 +1804,7 @@ class LlamaServerGUI:
                         continue
                     name = f.get('Name', '')
                     is_gguf = name.endswith('.gguf')
-                    ftype = self._classify_gguf_file(fname=name)
+                    ftype = gguf_reader.classify_file(fname=name)
                     if is_gguf or name.endswith('.gguf_file') or name.endswith('.txt'):
                         all_files.append({
                             'name': name,
@@ -2136,7 +2138,7 @@ class LlamaServerGUI:
                     if f.get('Type') != 'blob':
                         continue
                     name = f.get('Name', '')
-                    if name.endswith('.gguf') and self._classify_gguf_file(fname=name) != 'mmproj':
+                    if name.endswith('.gguf') and gguf_reader.classify_file(fname=name) != 'mmproj':
                         ggufs.append({
                             'name': name, 'path': f.get('Path', name),
                             'size': f.get('Size', 0)
@@ -2257,7 +2259,7 @@ class LlamaServerGUI:
         
         self._auto_fill_alias()
         
-        meta = self._read_gguf_metadata(path)
+        meta = gguf_reader.read_metadata(path)
         if not meta:
             return
         ctx = meta.get(f"{meta.get('general.architecture', '')}.context_length")
@@ -2289,211 +2291,7 @@ class LlamaServerGUI:
         ToolTip(entry, text=tooltip_text)
         ToolTip(browse_btn, text=f"选择一个 {file_ext} 文件。")
 
-    @staticmethod
-    @lru_cache(maxsize=256)
-    def _read_gguf_metadata(filepath):
-        """Read basic GGUF metadata from the file header.
-        Returns dict with architecture, context_length, file_type, etc.
-        Cached via lru_cache to avoid repeated file I/O."""
-        import struct
-        
-        def read_string(f):
-            """Read a GGUF string: length (uint64) + UTF-8 data."""
-            length = struct.unpack('<Q', f.read(8))[0]
-            return f.read(length).decode('utf-8', errors='replace')
-        
-        def read_value(f):
-            """Read a GGUF value based on its type.
-            Returns (key, value)."""
-            val_type = struct.unpack('<I', f.read(4))[0]
-            # GGUF value types
-            TYPES = {0: 'UINT8', 1: 'INT8', 2: 'UINT16', 3: 'INT16',
-                     4: 'UINT32', 5: 'INT32', 6: 'FLOAT32', 7: 'BOOL',
-                     8: 'STRING', 9: 'ARRAY', 10: 'UINT64', 11: 'INT64',
-                     12: 'FLOAT64', 13: 'BF16'}
-            
-            if val_type == 8:  # STRING
-                return read_string(f)
-            elif val_type == 7:  # BOOL
-                return struct.unpack('<?', f.read(1))[0]
-            elif val_type in (0, 1):  # UINT8, INT8
-                return struct.unpack('<b', f.read(1))[0]
-            elif val_type in (4, 5):  # UINT32, INT32
-                return struct.unpack('<i', f.read(4))[0]
-            elif val_type in (10, 11):  # UINT64, INT64
-                return struct.unpack('<q', f.read(8))[0]
-            elif val_type == 6:  # FLOAT32
-                return struct.unpack('<f', f.read(4))[0]
-            elif val_type == 12:  # FLOAT64
-                return struct.unpack('<d', f.read(8))[0]
-            elif val_type == 9:  # ARRAY - skip
-                arr_type = struct.unpack('<I', f.read(4))[0]
-                arr_len = struct.unpack('<Q', f.read(8))[0]
-                for _ in range(arr_len):
-                    if arr_type == 8:
-                        read_string(f)
-                    elif arr_type == 4:
-                        f.read(4)
-                    else:
-                        f.read(8)
-                return None
-            else:
-                return None
-        
-        try:
-            with open(filepath, 'rb') as f:
-                magic = f.read(4)
-                if magic != b'GGUF':
-                    return None
-                
-                version = struct.unpack('<I', f.read(4))[0]
-                tensor_count = struct.unpack('<Q', f.read(8))[0]
-                metadata_count = struct.unpack('<Q', f.read(8))[0]
-                
-                meta = {}
-                for _ in range(min(metadata_count, 500)):
-                    try:
-                        key = read_string(f)
-                        val = read_value(f)
-                        if key and val is not None:  # filter to relevant keys only
-                            meta[key] = val
-                    except Exception:
-                        break
-                
-                return meta
-        except Exception:
-            return None
 
-    def _get_model_metadata_display(self, filepath):
-        """Get a human-readable string of model metadata from GGUF header."""
-        meta = self._read_gguf_metadata(filepath)
-        if not meta:
-            return "无法读取元信息"
-        
-        lines = []
-        arch = meta.get('general.architecture', '')
-        if arch:
-            lines.append(f"架构: {arch}")
-        
-        # Context length - try architecture-specific keys
-        ctx = meta.get(f'{arch}.context_length') if arch else None
-        if not ctx:
-            for k, v in meta.items():
-                if 'context_length' in k:
-                    ctx = v
-                    break
-        if ctx:
-            lines.append(f"上下文: {ctx:,} tokens")
-        
-        ftype = meta.get('general.file_type', '')
-        if ftype:
-            type_names = {1: 'F32', 2: 'F16', 3: 'Q4_0', 5: 'Q4_1', 7: 'Q8_0', 
-                         8: 'Q5_0', 9: 'Q5_1', 10: 'Q2_K', 12: 'Q3_K', 
-                         13: 'Q4_K', 14: 'Q5_K', 15: 'Q6_K', 16: 'Q8_K'}
-            lines.append(f"量化: {type_names.get(ftype, f'Type {ftype}')}")
-        
-        params = meta.get('general.size_label', '')
-        if not params and arch:
-            n_layer = meta.get(f'{arch}.block_count', 0)
-            if n_layer:
-                lines.append(f"层数: {n_layer}")
-        
-        name = meta.get('general.name', '')
-        if name:
-            lines.insert(0, f"模型: {name}")
-
-        return " | ".join(lines) if lines else "基本元信息"
-
-    # ------------------------------------------------------------------
-    # file classification — shared between local tree + ModelScope
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    @lru_cache(maxsize=256)
-    def _read_gguf_type(filepath):
-        """Cached helper: read general.type from GGUF header."""
-        meta = LlamaServerGUI._read_gguf_metadata(filepath)
-        return meta.get('general.type', 'unknown') if meta else 'unknown'
-
-    @staticmethod
-    @lru_cache(maxsize=256)
-    def _read_gguf_embedding_check(filepath):
-        """Cached helper: check if GGUF model is an embedding model."""
-        meta = LlamaServerGUI._read_gguf_metadata(filepath)
-        if not meta:
-            return False
-        arch = meta.get('general.architecture', '')
-        if arch and arch.lower() in LlamaServerGUI._EMBEDDING_ARCHS:
-            return True
-        basename = meta.get('general.basename', '')
-        if basename and 'embed' in basename.lower():
-            return True
-        name = meta.get('general.name', '')
-        if name and 'embed' in name.lower():
-            return True
-        return False
-
-    def _classify_gguf_file(self, filepath=None, fname=None):
-        """Determine if a GGUF file is a multimodal projector (mmproj).
-
-        Priority:
-        1. If *filepath* points to a local file → read GGUF header ``general.type`` (definitive).
-        2. If only *fname* is available (ModelScope remote) → filename heuristic.
-
-        Returns ``"mmproj"``, ``"model"``, ``"imatrix"``, or ``"unknown"``.
-        """
-        # --- Filename heuristic (always checked — imatrix is detected by name, not header) ---
-        if fname:
-            lower = fname.lower()
-            if 'imatrix' in lower:
-                return 'imatrix'
-
-        # --- GGUF header (authoritative for mmproj vs model) ---
-        if filepath and os.path.isfile(filepath):
-            cached = self._read_gguf_type(filepath)
-            if cached in ('mmproj', 'model'):
-                return cached
-
-        # --- Filename heuristic (mmproj fallback for ModelScope remote) ---
-        if fname:
-            lower = fname.lower()
-            if 'mmproj' in lower:
-                return 'mmproj'
-            # If the file ends with .gguf or .gguf_file and doesn't match any special type, it's a model
-            if lower.endswith('.gguf') or lower.endswith('.gguf_file'):
-                return 'model'
-
-        return 'unknown'
-
-    # ------------------------------------------------------------------
-    # embedding model detection
-    # ------------------------------------------------------------------
-    _EMBEDDING_ARCHS = frozenset({'bge', 'gte', 'e5', 'text-embedding', 'sentence-bert', 'sentence-t5', 'instructor'})
-
-    def _is_embedding_model(self, filepath=None, fname=None):
-        """Detect if a GGUF file is an embedding/vector model.
-
-        Priority:
-        1. Local file → read GGUF header for ``general.architecture`` / ``general.basename``.
-        2. ModelScope remote → filename heuristic (``"embed"`` in name).
-
-        Uses an LRU-cached helper to avoid redundant file I/O.
-        """
-        # --- GGUF header (authoritative for local files) ---
-        if filepath and os.path.isfile(filepath):
-            if self._read_gguf_embedding_check(filepath):
-                return True
-
-        # --- Filename heuristic (ModelScope remote / fallback) ---
-        if fname:
-            lower = fname.lower()
-            # Must NOT be mmproj or imatrix
-            if 'mmproj' in lower or 'imatrix' in lower:
-                return False
-            if 'embed' in lower:
-                return True
-
-        return False
 
     def create_entry(self, parent, label_text, string_var, tooltip_text, row):
         label = ttk.Label(parent, text=label_text)
@@ -2740,6 +2538,39 @@ class LlamaServerGUI:
             Messagebox.ok("命令已复制到剪贴板！", "已复制", parent=cmd_window)
         ttk.Button(cmd_window, text="复制到剪贴板", command=copy_command).pack(pady=10)
 
+    def _kill_instance_process(self, proc=None, pid=None):
+        """Kill server process using process object + PID fallback (strategies 1+2).
+        Returns True if killed."""
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+                return True
+            except Exception:
+                pass
+        if pid:
+            try:
+                if self._is_windows():
+                    r = subprocess.run(
+                        ["taskkill", "/F", "/PID", str(pid)],
+                        capture_output=True, timeout=5, startupinfo=self._startupinfo()
+                    )
+                    return r.returncode == 0
+                else:
+                    os.kill(int(pid), signal.SIGTERM)
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _clear_instance_run_state(self, inst):
+        """Reset run-related fields on a stopped instance."""
+        inst["is_running"] = False
+        inst["process"] = None
+        inst["running_pid"] = ""
+        inst["health_active"] = False
+
+
     def start_server(self):
         # Save current instance config first
         self._save_active_instance()
@@ -2825,9 +2656,7 @@ class LlamaServerGUI:
         threading.Thread(target=self._health_check_loop,
             args=(health_host, health_port, health_inst_id), daemon=True).start()
         
-        self._refresh_instance_tree()
-        self._sync_bottom_bar_for_active_instance()
-        self._auto_save_instances()
+        self._sync_instance_ui()
 
     def stop_server(self):
         inst = self._instances.get(self._active_instance_id)
@@ -2916,14 +2745,9 @@ class LlamaServerGUI:
         
         # Clear run state (only after successful kill)
         with self._instances_lock:
-            inst["is_running"] = False
-            inst["process"] = None
-            inst["running_pid"] = ""
-            inst["health_active"] = False
+            self._clear_instance_run_state(inst)
         self.is_running = any(inst.get("is_running") for inst in self._instances.values())
-        self._refresh_instance_tree()
-        self._sync_bottom_bar_for_active_instance()
-        self._auto_save_instances()
+        self._sync_instance_ui()
     
     def server_stopped(self, inst_id=None):
         inst_id = inst_id or self._active_instance_id
@@ -2941,9 +2765,7 @@ class LlamaServerGUI:
         self.server_status_var.set("⏹ 已停止")
         self.server_status_label.config(foreground="gray")
         self.update_output("\n" + "=" * 80 + "\n⏹️ 服务器进程已终止。\n" + "=" * 80 + "\n", tag="normal")
-        self._refresh_instance_tree()
-        self._sync_bottom_bar_for_active_instance()
-        self._auto_save_instances()
+        self._sync_instance_ui()
 
     def update_output(self, text, tag=None, inst_id=None):
         """Append text to output with optional keyword highlighting.
@@ -3094,12 +2916,7 @@ class LlamaServerGUI:
         try:
             config = self._build_global_config()
             self.config_file = self._get_configs_path("instances.json")
-            tmp = self.config_file + ".tmp"
-            with open(tmp, 'w', encoding='utf-8') as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp, self.config_file)
+            config_store.save_atomic(self.config_file, config)
         except Exception as e:
             self.update_output(f"[保存失败] {e}\n", tag="error")
     
@@ -3230,27 +3047,11 @@ class LlamaServerGUI:
     def _stop_all_instances(self):
         """Kill all running server processes (multi-instance safe)."""
         for inst_id, inst in list(self._instances.items()):
-            proc = inst.get("process")
-            if proc:
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=3)
-                except Exception:
-                    pass
-            pid = inst.get("running_pid", "")
-            if pid:
-                try:
-                    if self._is_windows():
-                        subprocess.run(["taskkill", "/F", "/PID", str(pid)],
-                            capture_output=True, timeout=3, startupinfo=self._startupinfo())
-                    else:
-                        os.kill(int(pid), signal.SIGTERM)
-                except Exception:
-                    pass
-            inst["is_running"] = False
-            inst["process"] = None
-            inst["running_pid"] = ""
-            inst["health_active"] = False
+            self._kill_instance_process(
+                proc=inst.get("process"),
+                pid=inst.get("running_pid", "")
+            )
+            self._clear_instance_run_state(inst)
 
     def quit_application(self, icon=None, item=None):
         """Quit app from tray."""
@@ -3347,6 +3148,13 @@ class LlamaServerGUI:
             self.start_button.config(state=tk.NORMAL)
             self.stop_button.config(state=tk.DISABLED)
             self.browser_button.config(state=tk.DISABLED)
+
+
+    def _sync_instance_ui(self):
+        """Refresh instance tree, bottom bar, and auto-save."""
+        self._refresh_instance_tree()
+        self._sync_bottom_bar_for_active_instance()
+        self._auto_save_instances()
 
     def _migrate_single_to_instance(self):
         with self._instances_lock:
@@ -3715,9 +3523,7 @@ class LlamaServerGUI:
                     return
                 dialog.destroy()
                 inst["name"] = n
-                self._refresh_instance_tree()
-                self._sync_bottom_bar_for_active_instance()
-                self._auto_save_instances()
+                self._sync_instance_ui()
             else:
                 Messagebox.show_error("名称不能为空！", "错误", parent=dialog)
         entry.bind('<Return>', lambda e: do_rename())
