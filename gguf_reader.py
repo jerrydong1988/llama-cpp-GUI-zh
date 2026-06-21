@@ -30,11 +30,21 @@ def _read_value(f):
         return _read_string(f)
     elif val_type == 7:        # BOOL
         return struct.unpack("<?", f.read(1))[0]
-    elif val_type in (0, 1):   # UINT8, INT8
+    elif val_type == 0:        # UINT8
+        return struct.unpack("<B", f.read(1))[0]
+    elif val_type == 1:        # INT8
         return struct.unpack("<b", f.read(1))[0]
-    elif val_type in (4, 5):   # UINT32, INT32
+    elif val_type == 2:        # UINT16
+        return struct.unpack("<H", f.read(2))[0]
+    elif val_type == 3:        # INT16
+        return struct.unpack("<h", f.read(2))[0]
+    elif val_type == 4:        # UINT32
+        return struct.unpack("<I", f.read(4))[0]
+    elif val_type == 5:        # INT32
         return struct.unpack("<i", f.read(4))[0]
-    elif val_type in (10, 11): # UINT64, INT64
+    elif val_type == 10:       # UINT64
+        return struct.unpack("<Q", f.read(8))[0]
+    elif val_type == 11:       # INT64
         return struct.unpack("<q", f.read(8))[0]
     elif val_type == 6:        # FLOAT32
         return struct.unpack("<f", f.read(4))[0]
@@ -46,8 +56,8 @@ def _read_value(f):
         for _ in range(arr_len):
             if arr_type == 8:
                 _read_string(f)
-            elif arr_type == 4:
-                f.read(4)
+            elif arr_type in (0, 1, 2, 3, 4, 5, 6, 7, 10, 11, 12):
+                f.read({0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8}[arr_type])
             else:
                 f.read(8)
         return None

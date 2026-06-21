@@ -59,7 +59,10 @@ def params_to_dict(param_defs, get_var):
         if kind == "bool":
             d[ck] = bool(val)
         elif kind == "int":
-            d[ck] = int(val) if val else default
+            try:
+                d[ck] = int(val)
+            except (TypeError, ValueError):
+                d[ck] = default
         else:
             d[ck] = str(val).strip() if str(val).strip() else str(default)
     return d

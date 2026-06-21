@@ -326,7 +326,10 @@ class LlamaServerGUI:
             if kind == "bool":
                 d[ck] = bool(val)
             elif kind == "int":
-                d[ck] = int(val) if val else default
+                try:
+                    d[ck] = int(val)
+                except (TypeError, ValueError):
+                    d[ck] = default
             else:
                 d[ck] = str(val).strip() if str(val).strip() else str(default)
         return d
@@ -1827,9 +1830,9 @@ class LlamaServerGUI:
                 all_files.sort(key=sort_key)
                 self.root.after(0, lambda: self._ms_fetch_complete(True, all_files))
             except urllib.error.URLError as e:
-                self.root.after(0, lambda: self._ms_fetch_complete(False, f"网络错误：{e.reason}"))
+                self.root.after(0, lambda err=e: self._ms_fetch_complete(False, f"网络错误：{err.reason}"))
             except Exception as e:
-                self.root.after(0, lambda: self._ms_fetch_complete(False, str(e)))
+                self.root.after(0, lambda err=e: self._ms_fetch_complete(False, str(err)))
         
         threading.Thread(target=fetch, daemon=True).start()
     
@@ -2025,9 +2028,9 @@ class LlamaServerGUI:
                 self._ms_dl_results[file_info['type']] = save_path
                 self.root.after(0, self._download_next_in_queue)
             except urllib.error.URLError as e:
-                self.root.after(0, lambda: self._dl_queue_failed(f"网络错误：{e.reason}", save_path + '.tmp'))
+                self.root.after(0, lambda err=e: self._dl_queue_failed(f"网络错误：{err.reason}", save_path + '.tmp'))
             except Exception as e:
-                self.root.after(0, lambda: self._dl_queue_failed(str(e), save_path + '.tmp'))
+                self.root.after(0, lambda err=e: self._dl_queue_failed(str(err), save_path + '.tmp'))
         
         threading.Thread(target=download, daemon=True).start()
     
@@ -2153,9 +2156,9 @@ class LlamaServerGUI:
                 ggufs.sort(key=lambda x: x['name'])
                 self.root.after(0, lambda: self._draft_fetch_done(True, ggufs))
             except urllib.error.URLError as e:
-                self.root.after(0, lambda: self._draft_fetch_done(False, f"网络错误：{e.reason}"))
+                self.root.after(0, lambda err=e: self._draft_fetch_done(False, f"网络错误：{err.reason}"))
             except Exception as e:
-                self.root.after(0, lambda: self._draft_fetch_done(False, str(e)))
+                self.root.after(0, lambda err=e: self._draft_fetch_done(False, str(err)))
         
         threading.Thread(target=fetch, daemon=True).start()
     
@@ -2221,9 +2224,9 @@ class LlamaServerGUI:
                     os.replace(save_path + '.tmp', save_path)
                 self.root.after(0, lambda: self._draft_dl_done(True, save_path, filename))
             except urllib.error.URLError as e:
-                self.root.after(0, lambda: self._draft_dl_done(False, f"网络错误：{e.reason}", filename))
+                self.root.after(0, lambda err=e: self._draft_dl_done(False, f"网络错误：{err.reason}", filename))
             except Exception as e:
-                self.root.after(0, lambda: self._draft_dl_done(False, str(e), filename))
+                self.root.after(0, lambda err=e: self._draft_dl_done(False, str(err), filename))
         
         threading.Thread(target=download, daemon=True).start()
     
@@ -2402,7 +2405,7 @@ class LlamaServerGUI:
 
         for arg_item in self.custom_arguments:
             row_frame = ttk.Frame(self.custom_args_list_frame, padding=(5, 3))
-            row_frame.pack(fill=X, expand=True, padx=(0, 5)) 
+            row_frame.pack(fill=tk.X, expand=True, padx=(0, 5)) 
 
             is_enabled_var = tk.BooleanVar(value=arg_item.get("enabled", True))
             
@@ -2410,13 +2413,13 @@ class LlamaServerGUI:
                 item["enabled"] = var.get()
 
             toggle = ttk.Checkbutton(row_frame, variable=is_enabled_var, bootstyle="round-toggle", command=on_toggle)
-            toggle.pack(side=LEFT, padx=(0, 10))
+            toggle.pack(side=tk.LEFT, padx=(0, 10))
 
             label = ttk.Label(row_frame, text=arg_item["value"])
             delete_btn = ttk.Button(row_frame, text=_("删除"), bootstyle="danger-link", command=lambda item=arg_item: self.delete_custom_argument(item))
             
             # Pack order matters: label is packed after edit logic is set up.
-            delete_btn.pack(side=RIGHT, padx=(10, 0))
+            delete_btn.pack(side=tk.RIGHT, padx=(10, 0))
             
             ### ADDED ### Logic for double-click-to-edit
             def start_edit(event, item, lbl, frame, del_btn):
@@ -2424,7 +2427,7 @@ class LlamaServerGUI:
 
                 entry_var = tk.StringVar(value=item["value"])
                 edit_entry = ttk.Entry(frame, textvariable=entry_var)
-                edit_entry.pack(side=LEFT, fill=X, expand=True, before=del_btn)
+                edit_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, before=del_btn)
                 edit_entry.focus_set()
                 edit_entry.selection_range(0, tk.END)
 
@@ -2435,14 +2438,14 @@ class LlamaServerGUI:
                         lbl.config(text=new_value)
                     
                     edit_entry.destroy()
-                    lbl.pack(side=LEFT, fill=X, expand=True, before=del_btn) # Show the label again
+                    lbl.pack(side=tk.LEFT, fill=tk.X, expand=True, before=del_btn) # Show the label again
 
                 edit_entry.bind("<Return>", save_edit)
                 edit_entry.bind("<FocusOut>", save_edit)
 
             label.bind("<Double-1>", lambda e, item=arg_item, lbl=label, frame=row_frame, btn=delete_btn: start_edit(e, item, lbl, frame, btn))
             ToolTip(label, _("双击编辑此参数。"))
-            label.pack(side=LEFT, fill=X, expand=True, anchor=W)
+            label.pack(side=tk.LEFT, fill=tk.X, expand=True, anchor=tk.W)
 
 
     # --- Core Functionality ---
@@ -2552,9 +2555,17 @@ class LlamaServerGUI:
             try:
                 proc.terminate()
                 proc.wait(timeout=5)
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=5)
                 return True
             except Exception:
-                pass
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                    return True
+                except Exception:
+                    pass
         if pid:
             try:
                 if self._is_windows():
@@ -2991,6 +3002,8 @@ class LlamaServerGUI:
                 self.selected_engine_dir = inst.get("engine_dir", "")
                 self.ctx_size_auto.set(inst.get("ctx_size_auto", False))
                 self.custom_arguments = list(inst.get("custom_arguments", []))
+                if hasattr(self, 'rebuild_custom_args_list'):
+                    self.rebuild_custom_args_list()
         except Exception as e:
             self._migrate_single_to_instance()
     
