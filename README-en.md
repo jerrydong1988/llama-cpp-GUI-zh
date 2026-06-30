@@ -2,6 +2,16 @@
 
 > [🇨🇳 中文](README.md)
 >
+> ## 🚨 Project Archived
+>
+> **This repository is no longer maintained.** All features have been ported and significantly enhanced in **llama-server-manager**:
+>
+> [https://github.com/jerrydong1988/llama-server-manager](https://github.com/jerrydong1988/llama-server-manager)
+>
+> If you wish to continue using this version, you may **Fork this repository** and maintain it yourself. We recommend using the new llama-server-manager instead (more features, upgraded UI, better cross-platform experience).
+>
+> ---
+>
 > ⚠️ **v2.0.0 Breaking Change**: Architecture refactoring — `gguf_reader.py` and `config_store.py` extracted as independent modules; unified process kill and UI sync logic; main file reduced by 200+ lines. Compiled with `--windowed` mode (no console popup).
 >
 > Fork of [yossifibrahem/llama-cpp-GUI](https://github.com/yossifibrahem/llama-cpp-GUI) with deep customization — graphical management for llama.cpp servers.

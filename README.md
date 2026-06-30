@@ -2,6 +2,16 @@
 
 > [🇺🇸 English](README-en.md)
 >
+> ## 🚨 项目存档通知
+>
+> **此仓库不再持续维护。** 功能已移植并大幅增强至 **llama-server-manager**：
+>
+> [https://github.com/jerrydong1988/llama-server-manager](https://github.com/jerrydong1988/llama-server-manager)
+>
+> 如需继续使用本版本，可 **Fork 此仓库自行维护**。推荐直接使用新版 llama-server-manager（功能更完善、UI 升级、跨平台体验更好）。
+>
+> ---
+>
 > ⚠️ **v2.0.0 重要变更**：架构重构，提取 `gguf_reader.py` 和 `config_store.py` 独立模块；统一进程查杀与 UI 同步逻辑；主文件精简 200+ 行。编译产物 `--windowed` 模式，双击无黑框。
 >
 > 基于 [yossifibrahem/llama-cpp-GUI](https://github.com/yossifibrahem/llama-cpp-GUI) 深度二次开发 — 图形化管理 llama.cpp 服务器，简化llama.cpp的命令操作。感谢yossifibrahem开源了本项目，同时中文版改进工作主要贡献是Hermes Agent及背后的Deepseek v4 Flash模型，本人只提供了想法，具体实现由Hermes Agent及背后的Deepseek v4 Flash模型完成。
